@@ -310,13 +310,14 @@ impl Stack {
 
 #[derive(Debug, Clone, PartialEq)]
 struct Parser {
+    starts_and_ends: Vec<(Node, Node, char)>,
     end_letter: Letter,
     g: Lgraph,
     edge_direct: HashMap<usize, HashSet<(Letter, Option<u32>)>>,
 }
 
 impl Parser {
-    fn new(mut g: Lgraph) -> Self {
+    fn new(mut g: Lgraph, starts_and_ends: Vec<(Node, Node, char)>) -> Self {
         let next_bracket = g
             .edges()
             .flat_map(|e| e.bracket)
@@ -421,6 +422,7 @@ impl Parser {
             g,
             edge_direct,
             end_letter: Letter::new(next_letter),
+            starts_and_ends,
         }
     }
 
@@ -492,8 +494,137 @@ impl Parser {
         res
     }
 
+    fn edges_nodes(&self, edge: Edge) -> Vec<String> {
+        let term = edge.letter.map(|l| char::from_u32(l.idx).unwrap());
+
+        let mut start_node = None;
+        let mut end_node = None;
+        for (from, to, rule) in &self.starts_and_ends {
+            if to.idx == edge.to.idx {
+                end_node = Some(format!("{}]", rule));
+            }
+            if from.idx == edge.from.idx {
+                start_node = Some(format!("{}[", rule));
+            }
+        }
+
+        let mut res = vec![];
+        if let Some(start) = start_node {
+            res.push(start);
+        }
+        if let Some(term) = term {
+            res.push(term.to_string());
+        }
+        if let Some(end) = end_node {
+            res.push(end);
+        }
+
+        res
+    }
+
     fn write_js(&self, w: &mut dyn std::io::Write) -> std::io::Result<()> {
-        Ok(())
+        writeln!(
+            w,
+            r#"
+// File generated automatically
+// Graph: 
+/*{}*/ 
+// Table:
+/*{}*/
+
+class Parser {{
+    constructor() {{}}
+    static stack_push(stack, bracket_idx, bracket_open) {{
+        if (bracket_open) {{ stack.push(bracket_idx); return true; }}
+        if (stack.length === 0) {{ return false; }}
+        if (stack[stack.length - 1] !== bracket_idx) {{ return false; }}
+        stack.pop();
+        return true;
+    }}
+    static parse(str) {{
+        var state = {}
+        var stack = []
+        var path = []
+        str+="{}";
+        
+        LETTERS: for (let c of str) {{
+            EDGES: while(true) {{
+                var stack_top = stack.slice(-1)[0];
+                switch (state) {{    
+        "#,
+            self.g,
+            self.print_direct(),
+            self.g.start().idx,
+            char::from_u32(self.end_letter.idx).unwrap()
+        )?;
+        for cur_node in self.g.nodes() {
+            writeln!(w, "case {}:", cur_node.idx)?;
+
+            for e in self.g.edges_from(cur_node) {
+                for (l, b) in self
+                    .edge_direct
+                    .get(&e.idx)
+                    .expect(&format!("No direct generated for {}", e))
+                {
+                    let b_condition = match b {
+                        Some(b) => format!(" && stack_top === {}", b),
+                        None => String::new(),
+                    };
+                    writeln!(
+                        w,
+                        "if (c === '{}' {}) {{",
+                        char::from_u32(l.idx).unwrap(),
+                        b_condition,
+                    )?;
+
+                    writeln!(w, "state={};", e.to.idx)?;
+                    for node in self.edges_nodes(e) {
+                        writeln!(w, "path.push(\"{}\");", node)?;
+                    }
+
+                    if let Some(b) = e.bracket {
+                        writeln!(w, "if (!Parser.stack_push(stack, {}, {})) {{ throw new Error(\"Unbalanced brackets\"); }}", b.idx(), !b.is_closing())?;
+                    }
+                    if e.letter.is_some() {
+                        writeln!(w, "continue LETTERS;")?;
+                    } else {
+                        writeln!(w, "continue EDGES;")?;
+                    }
+                    writeln!(w, "}} else ")?;
+                }
+            }
+
+            writeln!(
+                w,
+                "{{ throw new Error(`No way to continue on letter '${{c}}'`); }}\nbreak;"
+            )?;
+        }
+
+        writeln!(
+            w,
+            r#"
+        default: throw new Error(`Unreachable state: ${{state}}`); }} 
+        }} 
+        }} 
+        
+        if (stack.length !== 0) {{
+            throw new Error(`Unbalanced brackets`);    
+        }}
+        const end_states = [ {} ];
+        var is_end_state = false;
+        for (let i=0;i<end_states.length; i++) {{
+            if (state === end_states[i]) {{ is_end_state = true; break; }} 
+        }}
+        if (!is_end_state) {{ throw new Error("Did not reach an end state"); }}
+        
+        path.pop();
+        return path  
+        }} 
+        }}"#,
+            self.g
+                .end_nodes()
+                .fold(String::new(), |acc, state| acc + &format!("{},", state.idx))
+        )
     }
 }
 
@@ -503,10 +634,14 @@ fn main() {
 
 #[cfg(test)]
 mod tests {
+    use std::io::Cursor;
+    use std::io::Write;
+    use std::process::Command;
+    use std::process::Stdio;
+
     use super::*;
 
-    #[test]
-    fn bnf() {
+    fn expr_lgraph() -> (Lgraph, Vec<(Node, Node, char)>) {
         let bnf = [
             (
                 'S',
@@ -532,10 +667,15 @@ mod tests {
             ),
         ];
 
-        let (g, starts_and_ends) = Lgraph::from_bnf(&bnf);
+        Lgraph::from_bnf(&bnf)
+    }
+
+    #[test]
+    fn bnf() {
+        let (g, starts_and_ends) = expr_lgraph();
         println!("{}", g);
 
-        let p = Parser::new(g);
+        let p = Parser::new(g, starts_and_ends.clone());
         println!("{}", p.g);
         println!("{}", p.print_direct());
 
@@ -596,5 +736,56 @@ mod tests {
         }
 
         nodes.into_iter().fold(String::new(), |acc, n| acc + &n)
+    }
+
+    #[test]
+    fn js_parser() {
+        let (g, starts_and_ends) = expr_lgraph();
+        let p = Parser::new(g, starts_and_ends);
+        let mut res = vec![];
+        let mut writer = Cursor::new(&mut res);
+        p.write_js(&mut writer).unwrap();
+
+        let mut node_process = Command::new("node")
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .spawn()
+            .unwrap();
+        let Some(mut node_stdin) = node_process.stdin.take() else { unreachable!() };
+        node_stdin.write_all(&res).unwrap();
+
+        for input in ["a+b+a", "a*(a+b)", "a+a+(a*(a+b))"] {
+            node_stdin
+                .write_all(
+                    format!(
+                        r#"
+        
+        // TESTING CODE 
+            {{
+                        
+            const ast = Parser.parse("{}");
+            var s = "";
+            for (const node of ast) {{
+                s+=node;
+            }}
+            console.log(s); }}
+                "#,
+                        input
+                    )
+                    .as_bytes(),
+                )
+                .unwrap();
+        }
+
+        drop(node_stdin);
+        let output = String::from_utf8(node_process.wait_with_output().unwrap().stdout).unwrap();
+
+        for (out, actual_out) in output.split('\n').zip([
+            "S[T[F[aF]T]+S[T[F[bF]T]+S[T[F[aF]T]S]S]S]",
+            "S[T[F[aF]*T[F[(S[T[F[aF]T]+S[T[F[bF]T]S]S])F]T]T]S]",
+            "S[T[F[aF]T]+S[T[F[aF]T]+S[T[F[(S[T[F[aF]*T[F[(S[T[F[aF]T]+S[T[F[bF]T]S]S])F]T]T]S])F]T]S]S]S]"
+        ]) {
+            assert_eq!(out, actual_out);
+        }
     }
 }
