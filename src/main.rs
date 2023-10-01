@@ -355,8 +355,6 @@ impl Parser {
         g.end_nodes = vec![g.node_count];
         g.node_count += 1;
 
-        println!("{}", g);
-
         let mut edge_direct: HashMap<_, HashSet<_>> = HashMap::new();
 
         for node in g.nodes() {
@@ -381,6 +379,9 @@ impl Parser {
                         for next_edge in g.edges_from(edge.to) {
                             let mut visited_clone = visited.clone();
                             if visited_clone.insert(next_edge.idx) {
+                                // [TODO] this should actually allow for 1 loop to be taken
+                                // for example in a section 1-)1->2; 2->3; 3->1; 1-a->4;
+                                // if we are in 2 it will not find the option (a, 1)
                                 next.push((
                                     next_edge,
                                     bracket,
@@ -439,7 +440,7 @@ impl Parser {
         s
     }
 
-    fn parse(&self, s: &[Letter]) -> Vec<usize> {
+    fn parse(&self, s: &[Letter]) -> Vec<String> {
         let mut cur_node = self.g.start();
         let mut res = vec![];
         let mut stack = Stack::new();
@@ -454,8 +455,10 @@ impl Parser {
 
                     for (l, b) in direct {
                         if l == letter && (stack.top() == *b || b.is_none()) {
-                            res.push(e.idx);
                             cur_node = e.to;
+                            for node in self.edges_nodes(e) {
+                                res.push(node);
+                            }
 
                             if let Some(b) = e.bracket {
                                 assert!(
@@ -491,6 +494,10 @@ impl Parser {
             s
         );
         assert!(stack.is_balanced());
+        assert_eq!(
+            res.pop(),
+            Some(char::from_u32(self.end_letter.idx).unwrap().to_string())
+        );
         res
     }
 
@@ -679,72 +686,30 @@ mod tests {
         println!("{}", p.g);
         println!("{}", p.print_direct());
 
-        let ast = parse_tree(&p, "a+b+a".chars(), &starts_and_ends);
+        let ast = parse_tree(&p, "a+b+a".chars());
         assert_eq!(ast, "S[T[F[aF]T]+S[T[F[bF]T]+S[T[F[aF]T]S]S]S]");
 
-        let ast = parse_tree(&p, "a*(a+b)".chars(), &starts_and_ends);
+        let ast = parse_tree(&p, "a*(a+b)".chars());
         assert_eq!(ast, "S[T[F[aF]*T[F[(S[T[F[aF]T]+S[T[F[bF]T]S]S])F]T]T]S]");
 
-        let ast = parse_tree(&p, "a+a+(a*(a+b))".chars(), &starts_and_ends);
+        let ast = parse_tree(&p, "a+a+(a*(a+b))".chars());
         assert_eq!(ast, "S[T[F[aF]T]+S[T[F[aF]T]+S[T[F[(S[T[F[aF]*T[F[(S[T[F[aF]T]+S[T[F[bF]T]S]S])F]T]T]S])F]T]S]S]S]");
     }
 
-    fn parse_tree<I>(
-        p: &Parser,
-        s: impl IntoIterator<Item = I>,
-        starts_and_ends: &[(Node, Node, char)],
-    ) -> String
+    fn parse_tree<I>(p: &Parser, s: impl IntoIterator<Item = I>) -> String
     where
         I: Into<u32>,
     {
         let l: Vec<_> = s.into_iter().map(|l| Letter::new(l.into())).collect();
         let path = p.parse(&l);
-        let mut nodes = vec![];
 
-        let mut i = 0;
-        for edge in path {
-            let edge = p.g.nth_edge(edge).unwrap();
-
-            let mut terminal = None;
-            if edge.letter == l.get(i).cloned() {
-                if let Some(l) = l.get(i) {
-                    terminal = Some(format!("{}", char::from_u32(l.idx).unwrap()));
-                }
-                i += 1;
-            }
-
-            let mut start_node = None;
-            let mut end_node = None;
-            for (from, to, rule) in starts_and_ends {
-                if to.idx == edge.to.idx {
-                    end_node = Some(format!("{}]", rule));
-                }
-                if from.idx == edge.from.idx {
-                    start_node = Some(format!("{}[", rule));
-                }
-            }
-
-            if let Some(n) = start_node {
-                nodes.push(n);
-            }
-            if let Some(t) = terminal {
-                nodes.push(t);
-            }
-            if let Some(n) = end_node {
-                nodes.push(n);
-            }
-        }
-
-        nodes.into_iter().fold(String::new(), |acc, n| acc + &n)
+        path.into_iter().fold(String::new(), |acc, n| acc + &n)
     }
 
     #[test]
     fn js_parser() {
         let (g, starts_and_ends) = expr_lgraph();
         let p = Parser::new(g, starts_and_ends);
-        let mut res = vec![];
-        let mut writer = Cursor::new(&mut res);
-        p.write_js(&mut writer).unwrap();
 
         let mut node_process = Command::new("node")
             .stdin(Stdio::piped())
@@ -752,7 +717,7 @@ mod tests {
             .spawn()
             .unwrap();
         let Some(mut node_stdin) = node_process.stdin.take() else { unreachable!() };
-        node_stdin.write_all(&res).unwrap();
+        p.write_js(&mut node_stdin).unwrap();
 
         for input in ["a+b+a", "a*(a+b)", "a+a+(a*(a+b))"] {
             node_stdin
@@ -787,5 +752,49 @@ mod tests {
         ]) {
             assert_eq!(out, actual_out);
         }
+    }
+
+    #[test]
+    fn bug_loop_error() {
+        let g = Lgraph {
+            edges: vec![
+                Edge::new(
+                    0,
+                    Node::new(0),
+                    Node::new(0),
+                    Some(Letter::new('a' as _)),
+                    Some(Bracket::Open(0)),
+                ),
+                Edge::new(1, Node::new(1), Node::new(0), None, Some(Bracket::Open(1))),
+                Edge::new(2, Node::new(0), Node::new(2), None, None),
+                Edge::new(
+                    3,
+                    Node::new(2),
+                    Node::new(3),
+                    None,
+                    Some(Bracket::Closed(0)),
+                ),
+                Edge::new(4, Node::new(3), Node::new(4), None, None),
+                Edge::new(5, Node::new(4), Node::new(2), None, None),
+                Edge::new(
+                    6,
+                    Node::new(2),
+                    Node::new(5),
+                    Some(Letter::new('b' as _)),
+                    Some(Bracket::Closed(1)),
+                ),
+            ],
+            node_count: 6,
+            start: 1,
+            end_nodes: vec![5],
+        };
+
+        let p = Parser::new(g, vec![(Node::new(1), Node::new(5), 'S')]);
+        println!("{}", p.g);
+        println!("{}", p.print_direct());
+        let ast = parse_tree(&p, ['a', 'b']);
+        assert_eq!(ast, "S[abS]");
+
+        assert_eq!(parse_tree(&p, ['a', 'a', 'b']), "S[aabS]", "This fails because we dont allow for any cycles to happen when generating the `direct` table");
     }
 }
