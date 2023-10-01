@@ -306,6 +306,7 @@ impl Stack {
     }
 }
 
+#[derive(Debug, Clone, PartialEq)]
 struct Parser {
     g: Lgraph,
     edge_direct: HashMap<usize, HashSet<(Letter, Option<u32>)>>,
@@ -319,16 +320,10 @@ impl Parser {
             let mut local_direct: HashMap<_, HashSet<_>> = HashMap::new();
 
             for start_edge in g.edges_from(node) {
-                let mut next = vec![(
-                    start_edge,
-                    None,
-                    Stack::new(),
-                    0,
-                    HashSet::from([start_edge.idx]),
-                )];
+                let mut next = vec![(start_edge, None, Stack::new(), 0, HashSet::new())];
 
-                while let Some((edge, mut bracket, mut stack, depth, mut visited)) = next.pop() {
-                    println!("{}{}", " ".repeat(depth), edge);
+                while let Some((edge, mut bracket, mut stack, depth, visited)) = next.pop() {
+                    //                    println!("{}{}", " ".repeat(depth), edge);
 
                     if let Some(b) = edge.bracket {
                         if !stack.push(b) && bracket.is_none() {
@@ -383,7 +378,6 @@ impl Parser {
             edge_direct.extend(local_direct);
         }
 
-        dbg!(&edge_direct);
         Self { g, edge_direct }
     }
 
@@ -480,23 +474,32 @@ mod tests {
         ];
 
         let (g, starts_and_ends) = Lgraph::from_bnf(&bnf);
-        println!("{}", g);
 
         let p = Parser::new(g);
-        println!("{:?}", parse_tree(&p, "a*(b+a)@".chars(), &starts_and_ends));
+        println!("{:?}", p);
 
-        panic!()
+        let ast = parse_tree(&p, "a+b+a@".chars(), &starts_and_ends);
+        assert_eq!(ast, "P[S[T[F[aF]T]+S[T[F[bF]T]+S[T[F[aF]T]S]S]S]@P]");
+
+        let ast = parse_tree(&p, "a*(a+b)@".chars(), &starts_and_ends);
+        assert_eq!(
+            ast,
+            "P[S[T[F[aF]*T[F[(S[T[F[aF]T]+S[T[F[bF]T]S]S])F]T]T]S]@P]"
+        );
+
+        let ast = parse_tree(&p, "a+a+(a*(a+b))@".chars(), &starts_and_ends);
+        assert_eq!(ast, "P[S[T[F[aF]T]+S[T[F[aF]T]+S[T[F[(S[T[F[aF]*T[F[(S[T[F[aF]T]+S[T[F[bF]T]S]S])F]T]T]S])F]T]S]S]S]@P]");
     }
 
     fn parse_tree<I>(
         p: &Parser,
         s: impl IntoIterator<Item = I>,
         starts_and_ends: &[(Node, Node, char)],
-    ) -> Vec<String>
+    ) -> String
     where
         I: Into<u32>,
     {
-        let l = letters(s);
+        let l: Vec<_> = s.into_iter().map(|l| Letter::new(l.into())).collect();
         let path = p.parse(&l);
         let mut nodes = vec![];
 
@@ -534,13 +537,6 @@ mod tests {
             }
         }
 
-        nodes
-    }
-
-    fn letters<I>(nums: impl IntoIterator<Item = I>) -> Vec<Letter>
-    where
-        I: Into<u32>,
-    {
-        nums.into_iter().map(|l| Letter::new(l.into())).collect()
+        nodes.into_iter().fold(String::new(), |acc, n| acc + &n)
     }
 }
