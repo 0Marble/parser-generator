@@ -151,13 +151,15 @@ impl Lgraph {
         for (_, reg) in rules {
             let nfa = reg.clone().into_nfa();
             let (state_machine, _) = nfa.into_min_dfa(true);
-            let mut state_machine = state_machine.into_nfa();
+            let (state_machine, _) = state_machine
+                .into_nfa()
+                .concat(Nfa::new(0).add_end_node(0))
+                .rename();
 
             if start_node.is_none() {
                 start_node = Some(state_machine.start_node().clone() + node_count);
                 end_nodes = state_machine.end_nodes().map(|n| n + node_count).collect();
             } else {
-                (state_machine, _) = state_machine.concat(Nfa::new(0).add_end_node(0)).rename();
             }
 
             starts_and_ends.push((
@@ -308,13 +310,53 @@ impl Stack {
 
 #[derive(Debug, Clone, PartialEq)]
 struct Parser {
+    end_letter: Letter,
     g: Lgraph,
     edge_direct: HashMap<usize, HashSet<(Letter, Option<u32>)>>,
 }
 
 impl Parser {
-    fn new(g: Lgraph) -> Self {
-        let mut edge_direct: HashMap<usize, HashSet<(Letter, Option<u32>)>> = HashMap::new();
+    fn new(mut g: Lgraph) -> Self {
+        let next_bracket = g
+            .edges()
+            .flat_map(|e| e.bracket)
+            .map(|b| b.idx())
+            .max()
+            .unwrap_or_default()
+            + 1;
+        let next_letter = g
+            .edges()
+            .flat_map(|e| e.letter)
+            .map(|l| l.idx)
+            .max()
+            .unwrap_or_default()
+            + 1;
+
+        g.edges.push(Edge::new(
+            g.edges.len(),
+            Node::new(g.node_count),
+            g.start(),
+            None,
+            Some(Bracket::Open(next_bracket)),
+        ));
+        g.start = g.node_count;
+        g.node_count += 1;
+        let old_end_nodes = std::mem::take(&mut g.end_nodes);
+        for end in old_end_nodes {
+            g.edges.push(Edge::new(
+                g.edges.len(),
+                Node::new(end),
+                Node::new(g.node_count),
+                Some(Letter::new(next_letter)),
+                Some(Bracket::Closed(next_bracket)),
+            ));
+        }
+        g.end_nodes = vec![g.node_count];
+        g.node_count += 1;
+
+        println!("{}", g);
+
+        let mut edge_direct: HashMap<_, HashSet<_>> = HashMap::new();
 
         for node in g.nodes() {
             let mut local_direct: HashMap<_, HashSet<_>> = HashMap::new();
@@ -323,15 +365,12 @@ impl Parser {
                 let mut next = vec![(start_edge, None, Stack::new(), 0, HashSet::new())];
 
                 while let Some((edge, mut bracket, mut stack, depth, visited)) = next.pop() {
-                    //                    println!("{}{}", " ".repeat(depth), edge);
-
                     if let Some(b) = edge.bracket {
                         if !stack.push(b) && bracket.is_none() {
                             assert!(b.is_closing(), "just in case");
                             bracket = Some(b.idx());
                         }
                     }
-
                     if let Some(l) = edge.letter {
                         local_direct
                             .entry(start_edge.idx)
@@ -378,7 +417,24 @@ impl Parser {
             edge_direct.extend(local_direct);
         }
 
-        Self { g, edge_direct }
+        Self {
+            g,
+            edge_direct,
+            end_letter: Letter::new(next_letter),
+        }
+    }
+
+    fn print_direct(&self) -> String {
+        let mut s = String::new();
+        for (edge, direct) in &self.edge_direct {
+            s += &format!(
+                "{}: {:?}\n",
+                self.g.nth_edge(*edge).unwrap(),
+                &direct.iter().map(|(l, b)| (l.idx, b)).collect::<Vec<_>>()
+            );
+        }
+
+        s
     }
 
     fn parse(&self, s: &[Letter]) -> Vec<usize> {
@@ -386,7 +442,7 @@ impl Parser {
         let mut res = vec![];
         let mut stack = Stack::new();
 
-        'LETTERS: for letter in s {
+        'LETTERS: for letter in s.iter().chain(std::iter::once(&self.end_letter)) {
             'EDGES: loop {
                 for e in self.g.edges_from(cur_node) {
                     let direct = self
@@ -395,7 +451,7 @@ impl Parser {
                         .expect(&format!("No direct computed for {:?}", e));
 
                     for (l, b) in direct {
-                        if l == letter && (b.is_none() || *b == stack.top()) {
+                        if l == letter && (stack.top() == *b || b.is_none()) {
                             res.push(e.idx);
                             cur_node = e.to;
 
@@ -435,6 +491,10 @@ impl Parser {
         assert!(stack.is_balanced());
         res
     }
+
+    fn write_js(&self, w: &mut dyn std::io::Write) -> std::io::Result<()> {
+        Ok(())
+    }
 }
 
 fn main() {
@@ -448,7 +508,6 @@ mod tests {
     #[test]
     fn bnf() {
         let bnf = [
-            ('P', Regex::Seq(vec![Regex::Char('S'), Regex::Char('@')])),
             (
                 'S',
                 Regex::Or(vec![
@@ -474,21 +533,20 @@ mod tests {
         ];
 
         let (g, starts_and_ends) = Lgraph::from_bnf(&bnf);
+        println!("{}", g);
 
         let p = Parser::new(g);
-        println!("{:?}", p);
+        println!("{}", p.g);
+        println!("{}", p.print_direct());
 
-        let ast = parse_tree(&p, "a+b+a@".chars(), &starts_and_ends);
-        assert_eq!(ast, "P[S[T[F[aF]T]+S[T[F[bF]T]+S[T[F[aF]T]S]S]S]@P]");
+        let ast = parse_tree(&p, "a+b+a".chars(), &starts_and_ends);
+        assert_eq!(ast, "S[T[F[aF]T]+S[T[F[bF]T]+S[T[F[aF]T]S]S]S]");
 
-        let ast = parse_tree(&p, "a*(a+b)@".chars(), &starts_and_ends);
-        assert_eq!(
-            ast,
-            "P[S[T[F[aF]*T[F[(S[T[F[aF]T]+S[T[F[bF]T]S]S])F]T]T]S]@P]"
-        );
+        let ast = parse_tree(&p, "a*(a+b)".chars(), &starts_and_ends);
+        assert_eq!(ast, "S[T[F[aF]*T[F[(S[T[F[aF]T]+S[T[F[bF]T]S]S])F]T]T]S]");
 
-        let ast = parse_tree(&p, "a+a+(a*(a+b))@".chars(), &starts_and_ends);
-        assert_eq!(ast, "P[S[T[F[aF]T]+S[T[F[aF]T]+S[T[F[(S[T[F[aF]*T[F[(S[T[F[aF]T]+S[T[F[bF]T]S]S])F]T]T]S])F]T]S]S]S]@P]");
+        let ast = parse_tree(&p, "a+a+(a*(a+b))".chars(), &starts_and_ends);
+        assert_eq!(ast, "S[T[F[aF]T]+S[T[F[aF]T]+S[T[F[(S[T[F[aF]*T[F[(S[T[F[aF]T]+S[T[F[bF]T]S]S])F]T]T]S])F]T]S]S]S]");
     }
 
     fn parse_tree<I>(
