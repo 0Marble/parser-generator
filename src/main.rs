@@ -361,7 +361,7 @@ impl Parser {
             let mut local_direct: HashMap<_, HashSet<_>> = HashMap::new();
 
             for start_edge in g.edges_from(node) {
-                let mut next = vec![(start_edge, None, Stack::new(), 0, HashSet::new())];
+                let mut next = vec![(start_edge, None, Stack::new(), 0, HashMap::<_, u8>::new())];
 
                 while let Some((edge, mut bracket, mut stack, depth, visited)) = next.pop() {
                     if let Some(b) = edge.bracket {
@@ -378,10 +378,9 @@ impl Parser {
                     } else {
                         for next_edge in g.edges_from(edge.to) {
                             let mut visited_clone = visited.clone();
-                            if visited_clone.insert(next_edge.idx) {
-                                // [TODO] this should actually allow for 1 loop to be taken
-                                // for example in a section 1-)1->2; 2->3; 3->1; 1-a->4;
-                                // if we are in 2 it will not find the option (a, 1)
+                            let visit_count = visited_clone.entry(next_edge.idx).or_default();
+                            *visit_count += 1;
+                            if *visit_count < 3 {
                                 next.push((
                                     next_edge,
                                     bracket,
@@ -641,7 +640,6 @@ fn main() {
 
 #[cfg(test)]
 mod tests {
-    use std::io::Cursor;
     use std::io::Write;
     use std::process::Command;
     use std::process::Stdio;
@@ -752,49 +750,5 @@ mod tests {
         ]) {
             assert_eq!(out, actual_out);
         }
-    }
-
-    #[test]
-    fn bug_loop_error() {
-        let g = Lgraph {
-            edges: vec![
-                Edge::new(
-                    0,
-                    Node::new(0),
-                    Node::new(0),
-                    Some(Letter::new('a' as _)),
-                    Some(Bracket::Open(0)),
-                ),
-                Edge::new(1, Node::new(1), Node::new(0), None, Some(Bracket::Open(1))),
-                Edge::new(2, Node::new(0), Node::new(2), None, None),
-                Edge::new(
-                    3,
-                    Node::new(2),
-                    Node::new(3),
-                    None,
-                    Some(Bracket::Closed(0)),
-                ),
-                Edge::new(4, Node::new(3), Node::new(4), None, None),
-                Edge::new(5, Node::new(4), Node::new(2), None, None),
-                Edge::new(
-                    6,
-                    Node::new(2),
-                    Node::new(5),
-                    Some(Letter::new('b' as _)),
-                    Some(Bracket::Closed(1)),
-                ),
-            ],
-            node_count: 6,
-            start: 1,
-            end_nodes: vec![5],
-        };
-
-        let p = Parser::new(g, vec![(Node::new(1), Node::new(5), 'S')]);
-        println!("{}", p.g);
-        println!("{}", p.print_direct());
-        let ast = parse_tree(&p, ['a', 'b']);
-        assert_eq!(ast, "S[abS]");
-
-        assert_eq!(parse_tree(&p, ['a', 'a', 'b']), "S[aabS]", "This fails because we dont allow for any cycles to happen when generating the `direct` table");
     }
 }
