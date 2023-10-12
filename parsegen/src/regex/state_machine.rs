@@ -9,6 +9,15 @@ pub struct Dfa {
 }
 
 impl Dfa {
+    pub fn to_nfa(&self) -> Nfa {
+        Nfa {
+            edges: self.edges().map(|(a, l, b)| (a, Some(l), b)).collect(),
+            start: vec![self.start],
+            end: self.end.clone(),
+            nodes: self.nodes.clone(),
+        }
+    }
+
     pub fn minimize(&self) -> Self {
         let mut eq_sets = vec![vec![], vec![]];
         for n in &self.nodes {
@@ -302,8 +311,26 @@ impl Nfa {
         for (a, l, b) in other.edges() {
             s.edges.push((a + d + 1, l, b + d + 1));
         }
+        s.start = vec![d];
 
         s
+    }
+
+    pub fn is_determined(&self) -> bool {
+        if self.start.len() > 1 {
+            return false;
+        }
+
+        for a in self.nodes() {
+            let mut seen = HashSet::new();
+            for (_, l, _) in self.edges_from(a) {
+                if !seen.insert(l) {
+                    return false;
+                }
+            }
+        }
+
+        true
     }
 }
 
@@ -386,6 +413,7 @@ mod tests {
                 vec![
                     (vec![], false),
                     (vec![1, 1, 2], true),
+                    (vec![1, 2, 2, 1, 2], true),
                     (vec![1, 2, 2, 1, 2, 2, 2], true),
                     (vec![2, 2, 2, 2, 1, 2, 1, 1, 1, 2, 1, 1, 2], true),
                     (vec![2, 2, 2, 1, 2], false),
@@ -397,10 +425,56 @@ mod tests {
             let mdfa = nfa.determine().minimize();
             println!("{:?}", mdfa);
             assert_eq!(mdfa.nodes().count(), size);
+            assert!(mdfa.to_nfa().is_determined());
 
             for (s, res) in exaples {
                 assert_eq!(
                     traverse_dfa(&mdfa, s.iter().cloned()),
+                    res,
+                    "failed on s={:?}",
+                    s
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn nfa_ops() {
+        for (m, tests) in [
+            (
+                nfa1().union(&nfa2()),
+                vec![
+                    (vec![], false),
+                    (vec![1usize, 2, 2, 1, 2], true),
+                    (vec![1, 1, 1], true),
+                    (vec![2, 2, 2], true),
+                    (vec![1, 2, 2, 1], false),
+                ],
+            ),
+            (
+                nfa1().concat(&nfa2()),
+                vec![
+                    (vec![], false),
+                    (vec![1, 1, 1, 2], true),
+                    (vec![2, 1, 1, 2], true),
+                    (vec![1, 1, 1], false),
+                    (vec![2, 2, 2, 2, 1, 1, 2, 1, 2, 2, 1], false),
+                    (vec![1, 2, 2, 1, 1, 1, 1, 2], true),
+                ],
+            ),
+            (
+                nfa1().star(),
+                vec![
+                    (vec![], true),
+                    (vec![1, 2], true),
+                    (vec![1, 1, 1, 2, 2, 1, 2, 1, 2, 1], true),
+                ],
+            ),
+        ] {
+            let m = m.determine().minimize();
+            for (s, res) in tests {
+                assert_eq!(
+                    traverse_dfa(&m, s.iter().cloned()),
                     res,
                     "failed on s={:?}",
                     s
