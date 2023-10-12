@@ -196,8 +196,27 @@ mod tests {
     }
 
     #[test]
+    fn uint() {
+        let m = Regex::uint().compile();
+
+        for (s, res) in vec![
+            ("", false),
+            ("1", true),
+            ("10", true),
+            ("2312314312", true),
+            ("12312w221", false),
+        ] {
+            assert_eq!(m.traverse(s.chars()), res, "failed on s={}", s);
+        }
+
+        assert_eq!(m.nodes().count(), 2);
+        assert_eq!(m.end_nodes().count(), 1);
+        assert_eq!(m.edges().count(), 10 * 2);
+    }
+
+    #[test]
     fn ident() {
-        let ident = Regex::ident().compile();
+        let m = Regex::ident().compile();
 
         for (s, res) in vec![
             ("foo", true),
@@ -207,7 +226,11 @@ mod tests {
             ("1m_a_failure", false),
             ("oops whitespace", false),
         ] {
-            assert_eq!(ident.traverse(s.chars()), res, "failed on s=\"{}\"", s);
+            assert_eq!(m.traverse(s.chars()), res, "failed on s=\"{}\"", s);
         }
+
+        assert_eq!(m.nodes().count(), 2);
+        assert_eq!(m.end_nodes().count(), 1);
+        assert_eq!(m.edges().count(), 2 + 4 * 26 + 10);
     }
 }

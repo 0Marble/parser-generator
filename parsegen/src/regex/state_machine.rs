@@ -119,9 +119,9 @@ where
                             continue;
                         }
 
-                        if self.is_end_node(*a) && self.is_end_node(*b) {
-                            continue 'b_loop;
-                        }
+                        // if self.is_end_node(*a) && self.is_end_node(*b) {
+                        //     continue 'b_loop;
+                        // }
 
                         let mut b_target_sets: Vec<(_, Vec<_>)> = vec![];
                         for (_, letter, to) in self.edges_from(*b) {
@@ -193,7 +193,7 @@ where
                 start = Some(a_idx);
             }
             for e in &self.end {
-                if a_set.contains(e) {
+                if a_set.contains(e) && !end.contains(&a_idx) {
                     end.push(a_idx);
                 }
             }
@@ -411,7 +411,7 @@ where
             }
         }
 
-        s.end.push(new_node);
+        s.end = vec![new_node];
         s
     }
 
@@ -546,7 +546,7 @@ mod tests {
                     (vec![2, 2, 2, 1, 2], false),
                     (vec![2, 1, 1, 1], false),
                 ],
-                12,
+                4,
             ),
         ] {
             let mdfa = nfa.determine().minimize();
