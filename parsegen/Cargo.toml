@@ -1,5 +1,5 @@
 [package]
-name = "lgraph-syntax-analyzer"
+name = "parsegen"
 version = "0.1.0"
 edition = "2021"
 
