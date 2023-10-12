@@ -22,7 +22,7 @@ impl Char {
         Self::next_u32(self.as_u32() + 1)
     }
     pub fn next_u32(v: u32) -> Self {
-        (v..)
+        (v..=u32::MAX)
             .find_map(|a| Char::from_u32(a))
             .expect("u32::MAX is always valid")
     }
@@ -376,5 +376,7 @@ mod tests {
         assert!(CharSet::new().is_empty());
         assert!(CharSet::new().add_min('\0').complement().is_empty());
         assert_eq!(CharSet::new().complement().to_string(), "[..]");
+
+        assert!(a.setminus(&a).is_empty());
     }
 }
