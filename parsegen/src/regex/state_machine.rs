@@ -1,15 +1,64 @@
-use std::collections::HashSet;
+use std::{any::type_name, collections::HashSet, fmt::Display, io::Cursor, io::Write};
 
 #[derive(Debug, Clone, PartialEq, Default)]
-pub struct Dfa {
-    edges: Vec<(usize, usize, usize)>,
+pub struct Dfa<T> {
+    edges: Vec<(usize, T, usize)>,
     start: usize,
     end: Vec<usize>,
     nodes: Vec<usize>,
 }
 
-impl Dfa {
-    pub fn to_nfa(&self) -> Nfa {
+impl<T> Dfa<T>
+where
+    T: Display + PartialEq + Clone,
+{
+    pub fn to_dot(&self) -> String {
+        let mut s = vec![];
+        let mut f = Cursor::new(&mut s);
+        writeln!(f, "digraph {{\n  node [shape=circle];\n  Q1 [style=invisible, height=0, width=0, fixedsize=true];").unwrap();
+        writeln!(
+            f,
+            "  node_type = \"{}\";\n  item_type = \"{}\";\n  kind = dfa;",
+            type_name::<usize>(),
+            type_name::<T>()
+        )
+        .unwrap();
+
+        writeln!(f, "  Q1 -> \"{}\";", self.start_node()).unwrap();
+
+        for (a, l, b) in self.edges() {
+            writeln!(f, "  \"{}\" -> \"{}\" [label=\"{}\"];", a, b, l,).unwrap();
+        }
+        for node in self.end_nodes() {
+            writeln!(f, "  \"{}\" [shape=doublecircle];", node).unwrap();
+        }
+
+        writeln!(f, "}}").unwrap();
+
+        String::from_utf8(s).unwrap()
+    }
+}
+
+impl<T> Dfa<T>
+where
+    T: PartialEq + Clone,
+{
+    pub fn traverse<V: Into<T>>(&self, s: impl IntoIterator<Item = V>) -> bool {
+        let mut state = self.start;
+        'outer: for c in s.into_iter() {
+            let c = c.into();
+            for (_, l, to) in self.edges_from(state) {
+                if l == c {
+                    state = to;
+                    continue 'outer;
+                }
+            }
+
+            return false;
+        }
+        self.is_end_node(state)
+    }
+    pub fn to_nfa(&self) -> Nfa<T> {
         Nfa {
             edges: self.edges().map(|(a, l, b)| (a, Some(l), b)).collect(),
             start: vec![self.start],
@@ -40,7 +89,7 @@ impl Dfa {
                         split.push(vec![*a]);
                     }
 
-                    let mut a_target_sets: Vec<(usize, Vec<_>)> = vec![];
+                    let mut a_target_sets: Vec<(_, Vec<_>)> = vec![];
                     for (_, letter, to) in self.edges_from(*a) {
                         let cur_set = if let Some((_, set)) =
                             a_target_sets.iter_mut().find(|(l, _)| *l == letter)
@@ -74,7 +123,7 @@ impl Dfa {
                             continue 'b_loop;
                         }
 
-                        let mut b_target_sets: Vec<(usize, Vec<_>)> = vec![];
+                        let mut b_target_sets: Vec<(_, Vec<_>)> = vec![];
                         for (_, letter, to) in self.edges_from(*b) {
                             let cur_set = if let Some((_, set)) =
                                 b_target_sets.iter_mut().find(|(l, _)| *l == letter)
@@ -129,13 +178,16 @@ impl Dfa {
             eq_sets = next;
         }
 
-        // dbg!(&eq_sets, &self);
+        // dbg!(&eq_sets);
 
         let mut edges = vec![];
         let mut start = None;
         let mut end = vec![];
 
         for (a_idx, a_set) in eq_sets.iter().enumerate() {
+            if a_set.is_empty() {
+                continue;
+            }
             let a = a_set[0];
             if start.is_none() && a_set.contains(&self.start) {
                 start = Some(a_idx);
@@ -163,10 +215,10 @@ impl Dfa {
             nodes: (0..eq_sets.len()).collect(),
         }
     }
-    pub fn edges(&self) -> impl Iterator<Item = (usize, usize, usize)> + '_ {
+    pub fn edges(&self) -> impl Iterator<Item = (usize, T, usize)> + '_ {
         self.edges.iter().cloned()
     }
-    pub fn edges_from(&self, n: usize) -> impl Iterator<Item = (usize, usize, usize)> + '_ {
+    pub fn edges_from(&self, n: usize) -> impl Iterator<Item = (usize, T, usize)> + '_ {
         self.edges().filter(move |(from, _, _)| *from == n)
     }
     pub fn is_end_node(&self, n: usize) -> bool {
@@ -175,18 +227,102 @@ impl Dfa {
     pub fn nodes(&self) -> impl Iterator<Item = usize> + '_ {
         self.nodes.iter().cloned()
     }
+    pub fn start_node(&self) -> usize {
+        self.start
+    }
+    pub fn end_nodes(&self) -> impl Iterator<Item = usize> + '_ {
+        self.end.iter().cloned()
+    }
 }
 
-#[derive(Debug, Clone, PartialEq, Default)]
-pub struct Nfa {
-    edges: Vec<(usize, Option<usize>, usize)>,
+#[derive(Debug, Clone, PartialEq)]
+pub struct Nfa<T> {
+    edges: Vec<(usize, Option<T>, usize)>,
     start: Vec<usize>,
     end: Vec<usize>,
     nodes: Vec<usize>,
 }
 
-impl Nfa {
-    pub fn determine(&self) -> Dfa {
+impl<T> Nfa<T>
+where
+    T: Display + PartialEq + Clone,
+{
+    pub fn to_dot(&self) -> String {
+        let mut s = vec![];
+        let mut f = Cursor::new(&mut s);
+        writeln!(f, "digraph {{\n  node [shape=circle];\n  Q1 [style=invisible, height=0, width=0, fixedsize=true];").unwrap();
+        writeln!(
+            f,
+            "  node_type = \"{}\";\n  item_type = \"{}\";\n  kind = nfa;",
+            type_name::<usize>(),
+            type_name::<T>()
+        )
+        .unwrap();
+
+        for n in &self.start {
+            writeln!(f, "  Q1 -> \"{}\";", n).unwrap();
+        }
+        for (a, l, b) in self.edges() {
+            writeln!(
+                f,
+                "  \"{}\" -> \"{}\" [label=\"{}\"];",
+                a,
+                b,
+                l.map(|l| l.to_string()).unwrap_or_default()
+            )
+            .unwrap();
+        }
+        for node in self.end_nodes() {
+            writeln!(f, "  \"{}\" [shape=doublecircle];", node).unwrap();
+        }
+
+        writeln!(f, "}}").unwrap();
+
+        String::from_utf8(s).unwrap()
+    }
+}
+
+impl<T> Nfa<T>
+where
+    T: PartialEq + Clone,
+{
+    pub fn new() -> Self {
+        Self {
+            edges: vec![],
+            start: vec![],
+            end: vec![],
+            nodes: vec![],
+        }
+    }
+    pub fn add_start_node(mut self, n: usize) -> Self {
+        self.start.push(n);
+        if !self.nodes.contains(&n) {
+            self.nodes.push(n);
+        }
+        self
+    }
+    pub fn add_end_node(mut self, n: usize) -> Self {
+        self.end.push(n);
+        if !self.nodes.contains(&n) {
+            self.nodes.push(n);
+        }
+        self
+    }
+    pub fn add_edge(mut self, from: usize, letter: Option<T>, to: usize) -> Self {
+        self.edges.push((from, letter, to));
+        if !self.nodes.contains(&from) {
+            self.nodes.push(from);
+        }
+        if !self.nodes.contains(&to) {
+            self.nodes.push(to);
+        }
+        self
+    }
+    pub fn clear(mut self) -> Self {
+        Self::new()
+    }
+
+    pub fn determine(&self) -> Dfa<T> {
         let mut mapping: Vec<Vec<usize>> = vec![self.start.clone()];
         let mut stack = vec![0];
         let mut edges = vec![];
@@ -245,14 +381,17 @@ impl Nfa {
         }
     }
 
-    fn edges(&self) -> impl Iterator<Item = (usize, Option<usize>, usize)> + '_ {
+    pub fn edges(&self) -> impl Iterator<Item = (usize, Option<T>, usize)> + '_ {
         self.edges.iter().cloned()
     }
-    fn edges_from(&self, n: usize) -> impl Iterator<Item = (usize, Option<usize>, usize)> + '_ {
+    pub fn edges_from(&self, n: usize) -> impl Iterator<Item = (usize, Option<T>, usize)> + '_ {
         self.edges().filter(move |(from, _, _)| *from == n)
     }
-    fn nodes(&self) -> impl Iterator<Item = usize> + '_ {
+    pub fn nodes(&self) -> impl Iterator<Item = usize> + '_ {
         self.nodes.iter().cloned()
+    }
+    pub fn end_nodes(&self) -> impl Iterator<Item = usize> + '_ {
+        self.end.iter().cloned()
     }
 
     pub fn star(&self) -> Self {
@@ -311,6 +450,9 @@ impl Nfa {
         for (a, l, b) in other.edges() {
             s.edges.push((a + d + 1, l, b + d + 1));
         }
+        for n in other.nodes() {
+            s.nodes.push(n + d + 1);
+        }
         s.start = vec![d];
 
         s
@@ -322,11 +464,12 @@ impl Nfa {
         }
 
         for a in self.nodes() {
-            let mut seen = HashSet::new();
+            let mut seen = vec![];
             for (_, l, _) in self.edges_from(a) {
-                if !seen.insert(l) {
+                if seen.contains(&l) {
                     return false;
                 }
+                seen.push(l);
             }
         }
 
@@ -339,7 +482,7 @@ mod tests {
 
     use super::*;
 
-    fn nfa1() -> Nfa {
+    fn nfa1() -> Nfa<usize> {
         let edges = vec![
             (0, Some(1), 1),
             (1, Some(1), 1),
@@ -354,7 +497,7 @@ mod tests {
         }
     }
 
-    fn nfa2() -> Nfa {
+    fn nfa2() -> Nfa<usize> {
         let edges = vec![
             (0, Some(1), 1),
             (0, Some(1), 0),
@@ -373,22 +516,6 @@ mod tests {
             end: vec![3],
             nodes: vec![0, 1, 2, 3],
         }
-    }
-
-    fn traverse_dfa<V: Into<usize>>(d: &Dfa, s: impl IntoIterator<Item = V>) -> bool {
-        let mut state = d.start;
-        'outer: for c in s.into_iter() {
-            let c = c.into();
-            for (_, l, to) in d.edges_from(state) {
-                if l == c {
-                    state = to;
-                    continue 'outer;
-                }
-            }
-
-            return false;
-        }
-        d.is_end_node(state)
     }
 
     #[test]
@@ -428,12 +555,7 @@ mod tests {
             assert!(mdfa.to_nfa().is_determined());
 
             for (s, res) in exaples {
-                assert_eq!(
-                    traverse_dfa(&mdfa, s.iter().cloned()),
-                    res,
-                    "failed on s={:?}",
-                    s
-                );
+                assert_eq!(mdfa.traverse(s.iter().cloned()), res, "failed on s={:?}", s);
             }
         }
     }
@@ -473,12 +595,7 @@ mod tests {
         ] {
             let m = m.determine().minimize();
             for (s, res) in tests {
-                assert_eq!(
-                    traverse_dfa(&m, s.iter().cloned()),
-                    res,
-                    "failed on s={:?}",
-                    s
-                );
+                assert_eq!(m.traverse(s.iter().cloned()), res, "failed on s={:?}", s);
             }
         }
     }
