@@ -1,5 +1,77 @@
 use std::{any::type_name, collections::HashSet, fmt::Display, io::Cursor, io::Write};
 
+#[derive(Debug, Clone, PartialEq)]
+pub struct StateMachine<T> {
+    edges: Vec<(usize, T, usize)>,
+    start: Vec<usize>,
+    end: Vec<usize>,
+    nodes: Vec<usize>,
+}
+
+impl<T> StateMachine<T>
+where
+    T: Clone + PartialEq,
+{
+    pub fn new() -> Self {
+        Self {
+            edges: vec![],
+            start: vec![],
+            end: vec![],
+            nodes: vec![],
+        }
+    }
+    pub fn add_start_node(mut self, n: usize) -> Self {
+        self.start.push(n);
+        if !self.nodes.contains(&n) {
+            self.nodes.push(n);
+        }
+        self
+    }
+    pub fn add_end_node(mut self, n: usize) -> Self {
+        self.end.push(n);
+        if !self.nodes.contains(&n) {
+            self.nodes.push(n);
+        }
+        self
+    }
+    pub fn add_edge(mut self, from: usize, letter: T, to: usize) -> Self {
+        self.edges.push((from, letter, to));
+        if !self.nodes.contains(&from) {
+            self.nodes.push(from);
+        }
+        if !self.nodes.contains(&to) {
+            self.nodes.push(to);
+        }
+        self
+    }
+    pub fn edges(&self) -> impl Iterator<Item = (usize, T, usize)> + '_ {
+        self.edges.iter().cloned()
+    }
+    pub fn edges_from(&self, n: usize) -> impl Iterator<Item = (usize, T, usize)> + '_ {
+        self.edges().filter(move |(from, _, _)| *from == n)
+    }
+    pub fn is_end_node(&self, n: usize) -> bool {
+        self.end.contains(&n)
+    }
+    pub fn nodes(&self) -> impl Iterator<Item = usize> + '_ {
+        self.nodes.iter().cloned()
+    }
+    pub fn start_nodes(&self) -> impl Iterator<Item = usize> + '_ {
+        self.start.iter().cloned()
+    }
+    pub fn end_nodes(&self) -> impl Iterator<Item = usize> + '_ {
+        self.end.iter().cloned()
+    }
+
+    pub fn add_node(mut self, n: usize) -> Self {
+        if !self.nodes.contains(&n) {
+            self.nodes.push(n);
+        }
+
+        self
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct Dfa<T> {
     edges: Vec<(usize, T, usize)>,
