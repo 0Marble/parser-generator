@@ -1,7 +1,7 @@
 //
 pub mod lgraph;
 
-use std::{any::type_name, io::Cursor, io::Write};
+use std::{any::type_name, collections::HashSet, fmt::Display, io::Cursor, io::Write};
 
 use crate::{
     regex::{regular_expression::Regex, state_machine::StateMachine},
@@ -9,12 +9,34 @@ use crate::{
 };
 
 #[derive(Debug, Clone, PartialEq)]
+enum TokenOrEnd {
+    Token(Token),
+    End,
+}
+
+impl Display for TokenOrEnd {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            TokenOrEnd::Token(t) => write!(f, "{t}"),
+            TokenOrEnd::End => write!(f, "_End"),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+enum Item {
+    OpenBracket(usize, Token),
+    CloseBracket(usize, Token),
+    Token(TokenOrEnd),
+}
+
+#[derive(Debug, Clone, PartialEq)]
 pub struct Parser {
-    lgraph: StateMachine<(Option<(usize, bool)>, Option<Token>)>,
+    lgraph: StateMachine<Item>,
     rule_names: Vec<Token>,
     token_names: Vec<Token>,
-    sec_starts: Vec<usize>,
-    sec_ends: Vec<Vec<usize>>,
+    open_table: Vec<(usize, Vec<TokenOrEnd>)>,
+    close_table: Vec<(usize, Vec<TokenOrEnd>)>,
 }
 
 impl Parser {
@@ -26,25 +48,21 @@ impl Parser {
             f,
             "  node_type = \"{}\";\n  item_type = \"{}\";\n  kind = nfa;",
             type_name::<usize>(),
-            type_name::<(Option<(usize, bool)>, Option<Token>)>()
+            type_name::<Item>()
         )
         .unwrap();
 
         for n in self.lgraph.start_nodes() {
             writeln!(f, "  Q1 -> \"{}\";", n).unwrap();
         }
-        for (from, (bracket, token), to) in self.lgraph.edges() {
+        for (from, item, to) in self.lgraph.edges() {
             write!(f, "{from} -> {to} [label=\"").unwrap();
-            if let Some(tok) = token {
-                write!(f, "{tok}").unwrap();
+            match item {
+                Item::OpenBracket(i, _) => write!(f, "({i}").unwrap(),
+                Item::CloseBracket(i, _) => write!(f, "){i}").unwrap(),
+                Item::Token(t) => write!(f, "{t}").unwrap(),
             }
-            if let Some((id, is_open)) = bracket {
-                if is_open {
-                    write!(f, "({id}").unwrap();
-                } else {
-                    write!(f, "){id}").unwrap();
-                }
-            }
+
             writeln!(f, "\"];").unwrap();
         }
         for node in self.lgraph.end_nodes() {
@@ -58,8 +76,6 @@ impl Parser {
     pub fn new(rules: impl IntoIterator<Item = (Token, Regex<Token>)>) -> Self {
         let mut rule_names = vec![];
         let mut lgraph = StateMachine::new();
-        let mut sec_starts = vec![];
-        let mut sec_ends = vec![];
         let mut deltas = vec![];
 
         let mut dfas = vec![];
@@ -70,12 +86,10 @@ impl Parser {
             for n in dfa.nodes() {
                 lgraph = lgraph.add_node(n + delta);
             }
-            sec_starts.push(dfa.start_node() + delta);
             let mut ends = vec![];
             for n in dfa.end_nodes() {
                 ends.push(n + delta);
             }
-            sec_ends.push(ends);
 
             dfas.push(dfa);
             deltas.push(delta);
@@ -84,6 +98,8 @@ impl Parser {
         let mut token_names = vec![];
         dbg!(&rule_names);
         let mut bracket_count = 1;
+
+        let mut needs_table = vec![];
         for (i, dfa) in dfas.iter().enumerate() {
             for (from, tok, to) in dfa.edges() {
                 if let Some((j, _)) = rule_names
@@ -91,24 +107,28 @@ impl Parser {
                     .enumerate()
                     .find(|(_, t)| t.name() == tok.name())
                 {
-                    // TODO need to use an extra table, because the `tok` here may itself be a rule
-                    // name, like in the `expr` example
-                    // and also connecting to the second nodes like that may lead to some nodes
-                    // being left hanging, like in the `balanced_brackets` example
-                    for (_, tok, other_to) in dfas[j].edges_from(dfas[j].start_node()) {
-                        lgraph = lgraph.add_edge(
-                            from + deltas[i],
-                            (Some((bracket_count, true)), Some(tok)),
-                            other_to + deltas[j],
-                        );
-                    }
+                    lgraph = lgraph.add_edge(
+                        from + deltas[i],
+                        Item::OpenBracket(bracket_count, rule_names[j].clone()),
+                        dfas[j].start_node() + deltas[j],
+                    );
+                    needs_table.push((
+                        from + deltas[i],
+                        Item::OpenBracket(bracket_count, rule_names[j].clone()),
+                        dfas[j].start_node() + deltas[j],
+                    ));
 
-                    for other_from in sec_ends[j].iter() {
+                    for other_from in dfas[j].end_nodes() {
                         lgraph = lgraph.add_edge(
                             other_from + deltas[j],
-                            (Some((bracket_count, false)), None),
+                            Item::CloseBracket(bracket_count, rule_names[j].clone()),
                             to + deltas[i],
                         );
+                        needs_table.push((
+                            other_from + deltas[j],
+                            Item::CloseBracket(bracket_count, rule_names[j].clone()),
+                            to + deltas[i],
+                        ));
                     }
 
                     bracket_count += 1;
@@ -116,57 +136,93 @@ impl Parser {
                     if !token_names.contains(&tok) {
                         token_names.push(tok.clone());
                     }
-                    lgraph = lgraph.add_edge(from + deltas[i], (None, Some(tok)), to + deltas[i]);
+                    lgraph = lgraph.add_edge(
+                        from + deltas[i],
+                        Item::Token(TokenOrEnd::Token(tok)),
+                        to + deltas[i],
+                    );
                 }
             }
         }
 
-        lgraph = lgraph.add_start_node(sec_starts[0]);
-        for end in &sec_ends[0] {
-            lgraph = lgraph.add_end_node(*end);
+        let start_node = lgraph.nodes().count();
+        let pre_final_node = start_node + 1;
+        let final_node = start_node + 2;
+        lgraph = lgraph.add_start_node(start_node);
+        lgraph = lgraph.add_edge(
+            start_node,
+            Item::OpenBracket(0, rule_names[0].clone()),
+            dfas[0].start_node() + deltas[0],
+        );
+        needs_table.push((
+            start_node,
+            Item::OpenBracket(0, rule_names[0].clone()),
+            dfas[0].start_node() + deltas[0],
+        ));
+
+        for end in dfas[0].end_nodes() {
+            lgraph = lgraph.add_edge(
+                end + deltas[0],
+                Item::CloseBracket(0, rule_names[0].clone()),
+                pre_final_node,
+            );
+            needs_table.push((
+                end + deltas[0],
+                Item::CloseBracket(0, rule_names[0].clone()),
+                pre_final_node,
+            ));
         }
+        lgraph = lgraph.add_edge(pre_final_node, Item::Token(TokenOrEnd::End), final_node);
+        lgraph = lgraph.add_end_node(final_node);
 
-        for n in lgraph.nodes() {
-            let mut seen: Vec<(Option<(usize, bool)>, Option<Token>)> = vec![];
-            for (_, item, to) in lgraph.edges_from(n) {
-                assert_ne!(
-                    item,
-                    (None, None),
-                    "Empty edge {n} -> {to} (shouldnt ever happen)"
-                );
+        let mut open_table = vec![];
+        let mut close_table = vec![];
+        for (_, bracket, to) in needs_table {
+            let mut visited = HashSet::new();
+            let mut stack: Vec<_> = vec![to];
 
-                if matches!(item.0, Some((_, true)),) {
-                    assert_ne!(
-                        item.1, None,
-                        "Single open bracket on edge {n} -> {to} (shouldnt ever happen)"
-                    );
-                }
-
-                if let Some(token) = &item.1 {
-                    for (other_bracket, other_token) in &seen {
-                        if other_token.as_ref() == Some(token) {
-                            match (other_bracket, item.0) {
-                                (Some((other_idx, other_is_open)), Some((idx, is_open))) => {
-                                    assert!(
-                                        !is_open && !other_is_open && *other_idx != idx,
-                                        "Conflict on node {n}!"
-                                    )
-                                }
-                                _ => panic!("Conflict on node {n}!"),
+            let mut tokens = vec![];
+            while let Some(node) = stack.pop() {
+                visited.insert(node);
+                for (_, item, to) in lgraph.edges_from(node) {
+                    match item {
+                        Item::Token(t) => {
+                            if !tokens.contains(&t) {
+                                tokens.push(t)
+                            }
+                        }
+                        _ => {
+                            if !visited.contains(&to) {
+                                stack.push(to);
                             }
                         }
                     }
                 }
-                seen.push(item);
+            }
+
+            match bracket {
+                Item::OpenBracket(i, _) => open_table.push((i, tokens)),
+                Item::CloseBracket(i, _) => close_table.push((i, tokens)),
+                Item::Token(_) => unreachable!(),
             }
         }
+
+        // check the parser for determinism
+        for n in lgraph.nodes() {
+            // let mut seen = vec![];
+            for (_, item, to) in lgraph.edges_from(n) {
+                //
+            }
+        }
+
+        dbg!(&open_table);
 
         Self {
             lgraph,
             rule_names,
-            sec_starts,
-            sec_ends,
             token_names,
+            open_table,
+            close_table,
         }
     }
 
@@ -179,6 +235,7 @@ impl Parser {
 */
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Token {{
+    _End,
 ",
             self.to_dot()
         )?;
@@ -199,7 +256,7 @@ pub enum Node {{
         for tok in &self.token_names {
             write!(w, "{}(usize),\n", tok.name())?;
         }
-        write!(w, "}} use std::fmt::Display; impl Display for Token {{ fn fmt(&self, fmt: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {{ match self {{ ")?;
+        write!(w, "}} use std::fmt::Display; impl Display for Token {{ fn fmt(&self, fmt: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {{ match self {{ Self::_End => write!(fmt, \"_End\"),")?;
         for tok in &self.token_names {
             writeln!(
                 w,
@@ -253,60 +310,65 @@ impl Parser {{
     fn top_bracket(&self) -> usize {{ self.brackets.last().cloned().unwrap() }}
 
     pub fn eat_token(&mut self, tok: Token) -> Vec<Node> {{
-        let top = self.top_bracket();
         let mut res = vec![];
         let mut consumed = false;
         while !consumed {{
+        let top = self.top_bracket();
         match self.state {{
             ",
             self.lgraph.start_nodes().next().unwrap()
         )?;
 
         for n in self.lgraph.nodes() {
-            for (_, (bracket, token), to) in self.lgraph.edges_from(n) {
-                match (bracket, token.as_ref()) {
-                    (None, None) => unreachable!(),
-                    (None, Some(tok)) => write!(w, "{} if tok == Token::{} => {{ ", n, tok)?,
-                    (Some((id, is_open)), None) => {
-                        if is_open {
-                            write!(w, "{} => {{ self.brackets.push({}); ", n, id)?;
-                        } else {
-                            write!(w, "{} if top == {} => {{ self.brackets.pop(); ", n, id)?;
+            for (from, item, to) in self.lgraph.edges_from(n) {
+                match &item {
+                    Item::CloseBracket(i, _) => {
+                        write!(w, "{from} if top == {i} && matches!(tok, ")?;
+                        let next_letters = self.close_table.iter().find(|(idx, _)| idx == i);
+                        assert!(next_letters.is_some(), "No next_letters for {from}, {i}");
+                        let next_letters = &next_letters.unwrap().1;
+                        assert!(
+                            !next_letters.is_empty(),
+                            "Empty next_letters for {from}, {i}"
+                        );
+                        write!(w, "Token::{} ", next_letters[0])?;
+                        for t in next_letters.iter().skip(1) {
+                            write!(w, "| Token::{t} ")?;
                         }
+                        write!(w, ") => {{ self.brackets.pop(); ")?;
                     }
-                    (Some((id, is_open)), Some(tok)) => {
-                        write!(w, "{n} if tok == Token::{tok} ")?;
-                        if is_open {
-                            write!(w, "=> {{ self.brackets.push({id});")?;
-                        } else {
-                            write!(w, "&& top == {id} => {{ self.brackets.pop(); ")?;
+                    Item::OpenBracket(i, _) => {
+                        write!(w, "{from} if matches!(tok, ")?;
+                        let next_letters = self.open_table.iter().find(|(idx, _)| idx == i);
+                        assert!(next_letters.is_some(), "No next_letters for {from}, {i}");
+                        let next_letters = &next_letters.unwrap().1;
+                        assert!(
+                            !next_letters.is_empty(),
+                            "Empty next_letters for {from}, {i}"
+                        );
+                        write!(w, "Token::{} ", next_letters[0])?;
+                        for t in next_letters.iter().skip(1) {
+                            write!(w, "| Token::{t} ")?;
                         }
+                        write!(w, ") => {{ self.brackets.push({i}); ")?;
+                    }
+                    Item::Token(t) => {
+                        write!(w, "{n} if tok == Token::{t} => {{ consumed = true; ")?
                     }
                 }
 
-                if let Some((idx, _)) = self
-                    .sec_starts
-                    .iter()
-                    .enumerate()
-                    .find(|(_, node)| **node == n)
-                {
-                    write!(w, "res.push(Node::{}Start); ", self.rule_names[idx].name())?;
+                if let Item::OpenBracket(_, node) = &item {
+                    write!(w, "res.push(Node::{node}Start); ")?;
                 }
-                if let Some(tok) = token.as_ref() {
+
+                if let Item::Token(TokenOrEnd::Token(t)) = &item {
                     write!(
                         w,
-                        "res.push(Node::{}(self.tokens_eaten)); self.tokens_eaten += 1; consumed = true; ",
-                        tok
+                        "res.push(Node::{t}(self.tokens_eaten)); self.tokens_eaten += 1;"
                     )?;
                 }
-
-                if let Some((idx, _)) = self
-                    .sec_ends
-                    .iter()
-                    .enumerate()
-                    .find(|(_, ends)| ends.contains(&to))
-                {
-                    write!(w, "res.push(Node::{}End); ", self.rule_names[idx].name())?;
+                if let Item::CloseBracket(_, node) = &item {
+                    write!(w, "res.push(Node::{node}End); ")?;
                 }
 
                 writeln!(w, "self.state = {to}; }}")?;
@@ -317,7 +379,7 @@ impl Parser {{
             "
             _ => panic!(\"Could not continue on {{}}, {{top}}, {{tok}}!\", self.state) 
         }} }}
-    return res;
+    res
     }}
 
     pub fn is_in_end_state(&self) -> bool {{
@@ -361,12 +423,12 @@ use parser::*;
 
 fn main() {{
     use Token::*;
-    let input = [{}];
+    let input = [{}, _End];
     let mut p = Parser::new();
     
     for tok in input {{
         for node in p.eat_token(tok) {{
-            print!(\"{{}}\", node);
+            print!(\"{{}},\", node);
         }}
     }}
     assert!(p.is_in_end_state());
@@ -389,8 +451,13 @@ fn main() {{
             let mut stdin = process.stdin.take().unwrap();
             writeln!(&mut stdin, "{}", input.to_string()).unwrap();
             drop(stdin);
-            let output = process.wait_with_output().unwrap().stdout;
-            let output = String::from_utf8(output).unwrap();
+            let output = process.wait_with_output().unwrap();
+            assert!(
+                output.status.success(),
+                "stderr: {}",
+                String::from_utf8(output.stderr).unwrap()
+            );
+            let output = String::from_utf8(output.stdout).unwrap();
             Command::new("rm").args(["-rf", path]).output().unwrap();
 
             res.push(output);
@@ -463,17 +530,27 @@ fn main() {{
             (
                 "balanced_bracket",
                 balanced_brackets_grammar(),
-                vec!["Lp, Rp"],
-                vec![],
+                vec!["Lp, Rp", "Lp,Lp,Rp,Rp"],
+                vec![
+                    "AStart,Lp(0),AStart,AEnd,Rp(1),AStart,AEnd,AEnd,",
+                    "AStart,Lp(0),AStart,Lp(1),AStart,AEnd,Rp(2),AStart,AEnd,AEnd,Rp(3),AStart,AEnd,AEnd,",
+                ],
             ),
             (
                 "expr",
                 expr_grammar(),
-                vec!["Ident,Add, Ident"],
-                vec!["asd"],
+                vec![
+                    "Ident,Add,Ident", 
+                    "Ident,Mul,Lp,Ident,Add,Ident,Rp"
+                ],
+                vec![
+                    "ExprStart,TermStart,FactorStart,Ident(0),FactorEnd,TermEnd,Add(1),TermStart,FactorStart,Ident(2),FactorEnd,TermEnd,ExprEnd,", 
+                    "ExprStart,TermStart,FactorStart,Ident(0),FactorEnd,Mul(1),FactorStart,Lp(2),ExprStart,TermStart,FactorStart,Ident(3),FactorEnd,TermEnd,Add(4),TermStart,FactorStart,Ident(5),FactorEnd,TermEnd,ExprEnd,Rp(6),FactorEnd,TermEnd,ExprEnd,",
+                ],
             ),
         ] {
             let p = Parser::new(grammar);
+            println!("{}", p.to_dot());
             p.to_rs(&mut std::fs::File::create(format!("src/{name}.rs")).unwrap())
                 .unwrap();
             for (out, actual_out) in get_results(&p, inputs, name)
