@@ -32,6 +32,10 @@ pub struct Tokenizer {
 }
 
 impl Tokenizer {
+    pub fn get_token_names(&self) -> impl Iterator<Item = Token> + '_ {
+        self.dfas.iter().map(|(t, _)| t.clone())
+    }
+
     pub fn new(regexes: Vec<(Token, Regex<char>)>) -> Self {
         Self {
             dfas: regexes.into_iter().map(|(t, r)| (t, r.compile())).collect(),

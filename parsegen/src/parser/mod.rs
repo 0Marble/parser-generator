@@ -8,7 +8,7 @@ use crate::{
     tokenizer::Token,
 };
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 enum TokenOrEnd {
     Token(Token),
     End,
@@ -25,8 +25,8 @@ impl Display for TokenOrEnd {
 
 #[derive(Debug, Clone, PartialEq)]
 enum Item {
-    OpenBracket(usize, Token),
-    CloseBracket(usize, Token),
+    OpenBracket(usize, Token, Vec<TokenOrEnd>),
+    CloseBracket(usize, Token, Vec<TokenOrEnd>),
     Token(TokenOrEnd),
 }
 
@@ -35,8 +35,6 @@ pub struct Parser {
     lgraph: StateMachine<Item>,
     rule_names: Vec<Token>,
     token_names: Vec<Token>,
-    open_table: Vec<(usize, Vec<TokenOrEnd>)>,
-    close_table: Vec<(usize, Vec<TokenOrEnd>)>,
 }
 
 impl Parser {
@@ -58,12 +56,22 @@ impl Parser {
         for (from, item, to) in self.lgraph.edges() {
             write!(f, "{from} -> {to} [label=\"").unwrap();
             match item {
-                Item::OpenBracket(i, _) => write!(f, "({i}").unwrap(),
-                Item::CloseBracket(i, _) => write!(f, "){i}").unwrap(),
-                Item::Token(t) => write!(f, "{t}").unwrap(),
+                Item::OpenBracket(i, n, t) => {
+                    write!(f, "({i}\", start=\"{n}\", follow=\"[").unwrap();
+                    for t in t {
+                        write!(f, "{t},").unwrap();
+                    }
+                    writeln!(f, "]\"];").unwrap();
+                }
+                Item::CloseBracket(i, n, t) => {
+                    write!(f, "){i}\", end=\"{n}\", follow=\"[").unwrap();
+                    for t in t {
+                        write!(f, "{t},").unwrap();
+                    }
+                    writeln!(f, "]\"];").unwrap();
+                }
+                Item::Token(t) => writeln!(f, "{t}\"]").unwrap(),
             }
-
-            writeln!(f, "\"];").unwrap();
         }
         for node in self.lgraph.end_nodes() {
             writeln!(f, "  \"{}\" [shape=doublecircle];", node).unwrap();
@@ -73,18 +81,51 @@ impl Parser {
 
         String::from_utf8(s).unwrap()
     }
+
+    fn gen_follow_table(lg: &StateMachine<Item>, node: usize) -> Vec<TokenOrEnd> {
+        let mut visited = HashSet::new();
+        let mut stack: Vec<_> = vec![node];
+
+        let mut tokens = vec![];
+        while let Some(node) = stack.pop() {
+            visited.insert(node);
+            for (_, item, to) in lg.edges_from(node) {
+                match item {
+                    Item::Token(t) => {
+                        if !tokens.contains(&t) {
+                            tokens.push(t)
+                        }
+                    }
+                    _ => {
+                        if !visited.contains(&to) {
+                            stack.push(to);
+                        }
+                    }
+                }
+            }
+        }
+        tokens
+    }
+
+    pub fn get_token_names(&self) -> impl Iterator<Item = Token> + '_ {
+        self.token_names.iter().cloned()
+    }
+    pub fn get_rule_names(&self) -> impl Iterator<Item = Token> + '_ {
+        self.rule_names.iter().cloned()
+    }
+
     pub fn new(rules: impl IntoIterator<Item = (Token, Regex<Token>)>) -> Self {
         let mut rule_names = vec![];
-        let mut lgraph = StateMachine::new();
+        let mut untabled_lgraph = StateMachine::new();
         let mut deltas = vec![];
 
         let mut dfas = vec![];
         for (name, prod) in rules.into_iter() {
             rule_names.push(name);
             let dfa = prod.compile();
-            let delta = lgraph.nodes().count();
+            let delta = untabled_lgraph.nodes().count();
             for n in dfa.nodes() {
-                lgraph = lgraph.add_node(n + delta);
+                untabled_lgraph = untabled_lgraph.add_node(n + delta);
             }
             let mut ends = vec![];
             for n in dfa.end_nodes() {
@@ -96,10 +137,8 @@ impl Parser {
         }
 
         let mut token_names = vec![];
-        dbg!(&rule_names);
         let mut bracket_count = 1;
 
-        let mut needs_table = vec![];
         for (i, dfa) in dfas.iter().enumerate() {
             for (from, tok, to) in dfa.edges() {
                 if let Some((j, _)) = rule_names
@@ -107,28 +146,18 @@ impl Parser {
                     .enumerate()
                     .find(|(_, t)| t.name() == tok.name())
                 {
-                    lgraph = lgraph.add_edge(
+                    untabled_lgraph = untabled_lgraph.add_edge(
                         from + deltas[i],
-                        Item::OpenBracket(bracket_count, rule_names[j].clone()),
+                        Item::OpenBracket(bracket_count, rule_names[j].clone(), vec![]),
                         dfas[j].start_node() + deltas[j],
                     );
-                    needs_table.push((
-                        from + deltas[i],
-                        Item::OpenBracket(bracket_count, rule_names[j].clone()),
-                        dfas[j].start_node() + deltas[j],
-                    ));
 
                     for other_from in dfas[j].end_nodes() {
-                        lgraph = lgraph.add_edge(
+                        untabled_lgraph = untabled_lgraph.add_edge(
                             other_from + deltas[j],
-                            Item::CloseBracket(bracket_count, rule_names[j].clone()),
+                            Item::CloseBracket(bracket_count, rule_names[j].clone(), vec![]),
                             to + deltas[i],
                         );
-                        needs_table.push((
-                            other_from + deltas[j],
-                            Item::CloseBracket(bracket_count, rule_names[j].clone()),
-                            to + deltas[i],
-                        ));
                     }
 
                     bracket_count += 1;
@@ -136,7 +165,7 @@ impl Parser {
                     if !token_names.contains(&tok) {
                         token_names.push(tok.clone());
                     }
-                    lgraph = lgraph.add_edge(
+                    untabled_lgraph = untabled_lgraph.add_edge(
                         from + deltas[i],
                         Item::Token(TokenOrEnd::Token(tok)),
                         to + deltas[i],
@@ -145,84 +174,84 @@ impl Parser {
             }
         }
 
-        let start_node = lgraph.nodes().count();
+        let start_node = untabled_lgraph.nodes().count();
         let pre_final_node = start_node + 1;
         let final_node = start_node + 2;
-        lgraph = lgraph.add_start_node(start_node);
-        lgraph = lgraph.add_edge(
+        untabled_lgraph = untabled_lgraph.add_start_node(start_node);
+        untabled_lgraph = untabled_lgraph.add_edge(
             start_node,
-            Item::OpenBracket(0, rule_names[0].clone()),
+            Item::OpenBracket(0, rule_names[0].clone(), vec![]),
             dfas[0].start_node() + deltas[0],
         );
-        needs_table.push((
-            start_node,
-            Item::OpenBracket(0, rule_names[0].clone()),
-            dfas[0].start_node() + deltas[0],
-        ));
 
         for end in dfas[0].end_nodes() {
-            lgraph = lgraph.add_edge(
+            untabled_lgraph = untabled_lgraph.add_edge(
                 end + deltas[0],
-                Item::CloseBracket(0, rule_names[0].clone()),
+                Item::CloseBracket(0, rule_names[0].clone(), vec![]),
                 pre_final_node,
             );
-            needs_table.push((
-                end + deltas[0],
-                Item::CloseBracket(0, rule_names[0].clone()),
-                pre_final_node,
-            ));
         }
-        lgraph = lgraph.add_edge(pre_final_node, Item::Token(TokenOrEnd::End), final_node);
-        lgraph = lgraph.add_end_node(final_node);
+        untabled_lgraph =
+            untabled_lgraph.add_edge(pre_final_node, Item::Token(TokenOrEnd::End), final_node);
+        untabled_lgraph = untabled_lgraph.add_end_node(final_node);
 
-        let mut open_table = vec![];
-        let mut close_table = vec![];
-        for (_, bracket, to) in needs_table {
-            let mut visited = HashSet::new();
-            let mut stack: Vec<_> = vec![to];
-
-            let mut tokens = vec![];
-            while let Some(node) = stack.pop() {
-                visited.insert(node);
-                for (_, item, to) in lgraph.edges_from(node) {
-                    match item {
-                        Item::Token(t) => {
-                            if !tokens.contains(&t) {
-                                tokens.push(t)
-                            }
-                        }
-                        _ => {
-                            if !visited.contains(&to) {
-                                stack.push(to);
-                            }
-                        }
-                    }
+        let mut lgraph = StateMachine::new()
+            .add_start_node(start_node)
+            .add_end_node(final_node);
+        for (from, item, to) in untabled_lgraph.edges() {
+            match &item {
+                Item::OpenBracket(i, n, _) => {
+                    lgraph = lgraph.add_edge(
+                        from,
+                        Item::OpenBracket(
+                            *i,
+                            n.clone(),
+                            Self::gen_follow_table(&untabled_lgraph, to),
+                        ),
+                        to,
+                    )
                 }
-            }
-
-            match bracket {
-                Item::OpenBracket(i, _) => open_table.push((i, tokens)),
-                Item::CloseBracket(i, _) => close_table.push((i, tokens)),
-                Item::Token(_) => unreachable!(),
+                Item::CloseBracket(i, n, _) => {
+                    lgraph = lgraph.add_edge(
+                        from,
+                        Item::CloseBracket(
+                            *i,
+                            n.clone(),
+                            Self::gen_follow_table(&untabled_lgraph, to),
+                        ),
+                        to,
+                    )
+                }
+                Item::Token(_) => lgraph = lgraph.add_edge(from, item, to),
             }
         }
 
         // check the parser for determinism
         for n in lgraph.nodes() {
-            // let mut seen = vec![];
-            for (_, item, to) in lgraph.edges_from(n) {
-                //
+            let mut tokens_and_rb = HashSet::new();
+            let mut tokens = HashSet::new();
+            for (_, item, _) in lgraph.edges_from(n) {
+                match item {
+                    Item::OpenBracket(_, _, t) => {
+                        for t in t {
+                            assert!(tokens.insert(t), "Conflict on {n}")
+                        }
+                    }
+                    Item::CloseBracket(i, _, t) => {
+                        for t in t {
+                            assert!(!tokens.contains(&t), "Conflict on {n}");
+                            assert!(tokens_and_rb.insert((i, t)), "Conflict on {n}");
+                        }
+                    }
+                    Item::Token(t) => assert!(tokens.insert(t), "Conflict on {n}"),
+                }
             }
         }
-
-        dbg!(&open_table);
 
         Self {
             lgraph,
             rule_names,
             token_names,
-            open_table,
-            close_table,
         }
     }
 
@@ -322,32 +351,18 @@ impl Parser {{
         for n in self.lgraph.nodes() {
             for (from, item, to) in self.lgraph.edges_from(n) {
                 match &item {
-                    Item::CloseBracket(i, _) => {
+                    Item::CloseBracket(i, _, follow) => {
                         write!(w, "{from} if top == {i} && matches!(tok, ")?;
-                        let next_letters = self.close_table.iter().find(|(idx, _)| idx == i);
-                        assert!(next_letters.is_some(), "No next_letters for {from}, {i}");
-                        let next_letters = &next_letters.unwrap().1;
-                        assert!(
-                            !next_letters.is_empty(),
-                            "Empty next_letters for {from}, {i}"
-                        );
-                        write!(w, "Token::{} ", next_letters[0])?;
-                        for t in next_letters.iter().skip(1) {
+                        write!(w, "Token::{} ", follow[0])?;
+                        for t in follow.iter().skip(1) {
                             write!(w, "| Token::{t} ")?;
                         }
                         write!(w, ") => {{ self.brackets.pop(); ")?;
                     }
-                    Item::OpenBracket(i, _) => {
+                    Item::OpenBracket(i, _, follow) => {
                         write!(w, "{from} if matches!(tok, ")?;
-                        let next_letters = self.open_table.iter().find(|(idx, _)| idx == i);
-                        assert!(next_letters.is_some(), "No next_letters for {from}, {i}");
-                        let next_letters = &next_letters.unwrap().1;
-                        assert!(
-                            !next_letters.is_empty(),
-                            "Empty next_letters for {from}, {i}"
-                        );
-                        write!(w, "Token::{} ", next_letters[0])?;
-                        for t in next_letters.iter().skip(1) {
+                        write!(w, "Token::{} ", follow[0])?;
+                        for t in follow.iter().skip(1) {
                             write!(w, "| Token::{t} ")?;
                         }
                         write!(w, ") => {{ self.brackets.push({i}); ")?;
@@ -357,7 +372,7 @@ impl Parser {{
                     }
                 }
 
-                if let Item::OpenBracket(_, node) = &item {
+                if let Item::OpenBracket(_, node, _) = &item {
                     write!(w, "res.push(Node::{node}Start); ")?;
                 }
 
@@ -367,7 +382,7 @@ impl Parser {{
                         "res.push(Node::{t}(self.tokens_eaten)); self.tokens_eaten += 1;"
                     )?;
                 }
-                if let Item::CloseBracket(_, node) = &item {
+                if let Item::CloseBracket(_, node, _) = &item {
                     write!(w, "res.push(Node::{node}End); ")?;
                 }
 
@@ -551,8 +566,6 @@ fn main() {{
         ] {
             let p = Parser::new(grammar);
             println!("{}", p.to_dot());
-            p.to_rs(&mut std::fs::File::create(format!("src/{name}.rs")).unwrap())
-                .unwrap();
             for (out, actual_out) in get_results(&p, inputs, name)
                 .into_iter()
                 .zip(outputs.into_iter())
