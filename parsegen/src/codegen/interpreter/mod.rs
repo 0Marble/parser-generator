@@ -28,5 +28,5 @@ impl Display for Error {
 impl std::error::Error for Error {}
 
 pub trait Interpreter {
-    fn exec(&mut self, entry: Ident, bc: &[ByteCode]) -> Result<String, Error>;
+    fn exec(&mut self, bc: &[ByteCode]) -> Result<String, Error>;
 }

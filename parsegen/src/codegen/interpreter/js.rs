@@ -26,6 +26,7 @@ impl Js {
                 }
                 write!(w, "]")
             }
+            Type::String => write!(w, "\"\""),
             Type::Vec(_) => write!(w, "[]"),
             Type::Struct(_, fields) => {
                 write!(w, "{{")?;
@@ -54,7 +55,7 @@ impl Display for Val {
 }
 
 impl Interpreter for Js {
-    fn exec(&mut self, entry: Ident, bc: &[ByteCode]) -> Result<String, Error> {
+    fn exec(&mut self, bc: &[ByteCode]) -> Result<String, Error> {
         let mut res = vec![];
         let mut w = Cursor::new(&mut res);
         let w = &mut w;
@@ -84,6 +85,7 @@ impl Interpreter for Js {
                 }
                 ByteCode::Or(dest, lhs, rhs) => writeln!(w, "{} = {} || {};", dest.name, lhs, rhs)?,
                 ByteCode::Not(dest, val) => writeln!(w, "{} = !{};", dest.name, val)?,
+                ByteCode::Assign(dest, val) => writeln!(w, "{} = {};", dest.name, val)?,
                 ByteCode::IndexGet(dest, arr, idx) => {
                     writeln!(w, "{} = {}[{}];", dest.name, arr.name, idx)?
                 }
@@ -132,8 +134,83 @@ impl Interpreter for Js {
             }
         }
 
-        writeln!(w, "{}();", entry.name)?;
-
         Ok(String::from_utf8(res).unwrap())
+    }
+}
+
+#[cfg(test)]
+pub mod tests {
+    use std::io::Write;
+    use std::process::{Command, Stdio};
+
+    use super::*;
+    use crate::codegen::bytecode::programs as Bc;
+
+    pub struct NodeRunner;
+
+    impl Interpreter for NodeRunner {
+        fn exec(&mut self, bc: &[ByteCode]) -> Result<String, Error> {
+            Js.exec(bc)
+        }
+    }
+
+    impl Bc::TestRunner for NodeRunner {
+        fn run_test(&mut self, src: &str, input: &str) -> String {
+            let mut node_process = Command::new("node")
+                .stdin(Stdio::piped())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped())
+                .spawn()
+                .unwrap();
+            let Some(mut node_stdin) = node_process.stdin.take() else { unreachable!() };
+
+            node_stdin.write_all(src.as_bytes()).unwrap();
+            node_stdin
+                .write_all(
+                    format!(
+                        r#"
+function print(arg) {{
+    console.log(arg);
+}}
+
+var read_line_counter = 0;
+function read_line() {{
+    const lines = [ {} ];
+    const res = lines[read_line_counter];
+    read_line_counter += 1;
+    return res;
+}}
+
+function str_to_int(s) {{
+    return +s;
+}}
+
+main();
+
+"#,
+                        input.lines().fold(String::new(), |mut acc, l| {
+                            acc += l;
+                            acc += ",";
+                            acc
+                        })
+                    )
+                    .as_bytes(),
+                )
+                .unwrap();
+            node_stdin.write_all(input.as_bytes()).unwrap();
+            drop(node_stdin);
+            let output = node_process.wait_with_output().unwrap();
+            assert!(
+                output.status.success(),
+                "stderr: {}",
+                String::from_utf8(output.stderr).unwrap()
+            );
+            String::from_utf8(output.stdout).unwrap()
+        }
+    }
+
+    #[test]
+    fn run_programs() {
+        Bc::gauntlet(&mut NodeRunner)
     }
 }
