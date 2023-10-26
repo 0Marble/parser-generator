@@ -28,14 +28,8 @@ impl Js {
             }
             Type::String => write!(w, "\"\""),
             Type::Vec(_) => write!(w, "[]"),
-            Type::Struct(_, fields) => {
-                write!(w, "{{")?;
-                for (name, t) in fields.iter() {
-                    write!(w, "{}: ", name)?;
-                    Js::default_val(t, w)?;
-                    write!(w, ",")?;
-                }
-                write!(w, "}}")
+            Type::Struct(name) => {
+                write!(w, "new {}()", name)
             }
             Type::Ref(t) => Js::default_val(t, w),
         }
@@ -48,8 +42,15 @@ impl Display for Val {
             Val::Bool(b) => write!(f, "{}", b),
             Val::Char(c) => write!(f, "'{}'", c),
             Val::Uint(x) => write!(f, "{}", x),
-            Val::Variable(n) => write!(f, "{}", n.name),
-            Val::Ref(v) => write!(f, "{}", v),
+            Val::Copy(n) => match n.t {
+                Type::Void => unreachable!(),
+                Type::Array(_, _) => write!(f, "[... {}]", n.name),
+                Type::String => write!(f, "{}.repeat(1)", n.name),
+                Type::Vec(_) => write!(f, "[... {}]", n.name),
+                Type::Struct(_) => write!(f, "{{... {}}}", n.name),
+                _ => write!(f, "{}", n.name),
+            },
+            Val::Ref(n) => write!(f, "{}", n.name),
         }
     }
 }
@@ -131,6 +132,15 @@ impl Interpreter for Js {
                 }
                 ByteCode::Ret(val) => writeln!(w, "return {};", val)?,
                 ByteCode::FuncEnd => writeln!(w, "}}")?,
+                ByteCode::Struct(s) => {
+                    write!(w, "class {} {{\nconstructor() {{", s)?;
+                }
+                ByteCode::Field(field) => {
+                    write!(w, "this.{} = ", field.name)?;
+                    Js::default_val(&field.t, w)?;
+                    writeln!(w, ";")?
+                }
+                ByteCode::StructEnd => writeln!(w, "}}\n}}")?,
             }
         }
 

@@ -9,7 +9,7 @@ pub enum Type {
     Array(Box<Type>, usize),
     String,
     Vec(Box<Type>),
-    Struct(Rc<str>, Rc<[(Rc<str>, Type)]>),
+    Struct(Rc<str>),
     Ref(Box<Type>),
 }
 
@@ -18,8 +18,8 @@ pub enum Val {
     Bool(bool),
     Char(char),
     Uint(usize),
-    Variable(Ident),
-    Ref(Rc<Val>),
+    Copy(Ident),
+    Ref(Ident),
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -77,6 +77,10 @@ pub enum ByteCode {
     Func(Ident, Rc<[Ident]>),
     Ret(Val),
     FuncEnd,
+
+    Struct(Rc<str>),
+    Field(Ident),
+    StructEnd,
 }
 
 #[cfg(test)]
@@ -102,24 +106,19 @@ pub mod programs {
             B::Call(
                 a.clone(),
                 ("str_to_int", T::Uint).into(),
-                vec![(Val::Variable(s.clone()))].into(),
+                vec![(Val::Ref(s.clone()))].into(),
             ),
+            B::Destroy(s.clone()),
             B::Call(s.clone(), ("read_line", T::String).into(), vec![].into()),
             B::Call(
                 b.clone(),
                 ("str_to_int", T::Uint).into(),
-                vec![(Val::Variable(s.clone()))].into(),
+                vec![(Val::Ref(s.clone()))].into(),
             ),
+            B::Destroy(s.clone()),
             B::Create(c.clone()),
-            B::Add(
-                c.clone(),
-                Val::Variable(a.clone()),
-                Val::Variable(b.clone()),
-            ),
-            B::CallVoid(
-                ("print", T::Void).into(),
-                vec![Val::Variable(c.clone())].into(),
-            ),
+            B::Add(c.clone(), Val::Copy(a.clone()), Val::Copy(b.clone())),
+            B::CallVoid(("print", T::Void).into(), vec![Val::Copy(c.clone())].into()),
             B::FuncEnd,
         ]
     }
@@ -142,38 +141,76 @@ pub mod programs {
             B::Call(
                 n.clone(),
                 str_to_int.clone(),
-                vec![Val::Variable(s.clone())].into(),
+                vec![Val::Ref(s.clone())].into(),
             ),
+            B::Destroy(s.clone()),
             B::Create(i.clone()),
             B::Create(m.clone()),
             B::Create(d.clone()),
-            B::Le(
-                d.clone(),
-                Val::Variable(i.clone()),
-                Val::Variable(n.clone()),
-            ),
+            B::Le(d.clone(), Val::Copy(i.clone()), Val::Copy(n.clone())),
             //
-            B::While(Val::Variable(d.clone())),
-            B::CallVoid(print.clone(), vec![Val::Variable(i.clone())].into()),
-            B::Mod(m.clone(), Val::Variable(i.clone()), Val::Uint(3)),
-            B::Eq(d.clone(), Val::Variable(m.clone()), Val::Uint(0)),
-            B::If(Val::Variable(d.clone())),
+            B::While(Val::Copy(d.clone())),
+            B::CallVoid(print.clone(), vec![Val::Copy(i.clone())].into()),
+            B::Mod(m.clone(), Val::Copy(i.clone()), Val::Uint(3)),
+            B::Eq(d.clone(), Val::Copy(m.clone()), Val::Uint(0)),
+            B::If(Val::Copy(d.clone())),
             B::CallVoid(print.clone(), vec![Val::Char('f')].into()),
             B::IfEnd,
             //
-            B::Mod(m.clone(), Val::Variable(i.clone()), Val::Uint(5)),
-            B::Eq(d.clone(), Val::Variable(m.clone()), Val::Uint(0)),
-            B::If(Val::Variable(d.clone())),
+            B::Mod(m.clone(), Val::Copy(i.clone()), Val::Uint(5)),
+            B::Eq(d.clone(), Val::Copy(m.clone()), Val::Uint(0)),
+            B::If(Val::Copy(d.clone())),
             B::CallVoid(print.clone(), vec![Val::Char('b')].into()),
             B::IfEnd,
             //
-            B::Add(i.clone(), Val::Variable(i.clone()), Val::Uint(1)),
-            B::Le(
-                d.clone(),
-                Val::Variable(i.clone()),
-                Val::Variable(n.clone()),
-            ),
+            B::Add(i.clone(), Val::Copy(i.clone()), Val::Uint(1)),
+            B::Le(d.clone(), Val::Copy(i.clone()), Val::Copy(n.clone())),
             B::WhileEnd,
+            B::FuncEnd,
+        ]
+    }
+
+    fn objects_copied() -> Vec<ByteCode> {
+        let f: Ident = ("f", T::Void).into();
+        let a: Ident = ("a", T::Struct("MyStruct".into())).into();
+        let b: Ident = ("b", T::Struct("MyStruct".into())).into();
+        let x: Ident = ("x", T::Uint).into();
+        let s: Ident = ("s", T::String).into();
+        let print: Ident = ("print", T::Void).into();
+        let read_line: Ident = ("read_line", T::String).into();
+        let str_to_int: Ident = ("str_to_int", T::Uint).into();
+
+        vec![
+            B::Struct("MyStruct".into()),
+            B::Field(x.clone()),
+            B::StructEnd,
+            //
+            B::Func(f.clone(), vec![a.clone()].into()),
+            B::DotSet(a.clone(), x.clone(), Val::Uint(4)),
+            B::FuncEnd,
+            //
+            B::Func(("main", T::Void).into(), vec![].into()),
+            B::Create(a.clone()),
+            B::Create(x.clone()),
+            B::Create(s.clone()),
+            B::Call(s.clone(), read_line.clone(), vec![].into()),
+            B::Call(
+                x.clone(),
+                str_to_int.clone(),
+                vec![Val::Ref(s.clone())].into(),
+            ),
+            B::Destroy(s.clone()),
+            //
+            B::DotSet(a.clone(), x.clone(), Val::Copy(x.clone())),
+            B::Create(b.clone()),
+            B::Assign(b.clone(), Val::Copy(a.clone())),
+            B::DotSet(b.clone(), x.clone(), Val::Uint(3)),
+            //
+            B::CallVoid(f.clone(), vec![Val::Copy(b.clone())].into()),
+            B::DotGet(x.clone(), a.clone(), x.clone()),
+            B::CallVoid(print.clone(), vec![Val::Copy(x.clone())].into()),
+            B::DotGet(x.clone(), b.clone(), x.clone()),
+            B::CallVoid(print.clone(), vec![Val::Copy(x.clone())].into()),
             B::FuncEnd,
         ]
     }
@@ -216,6 +253,16 @@ pub mod programs {
                 fb(n),
                 "error on fizz_buzz n={n}"
             );
+        }
+
+        let bc = objects_copied();
+        let s = tr.exec(&bc).unwrap();
+        for x in [0, 10, 20, 30] {
+            assert_eq!(
+                tr.run_test(&s, &x.to_string()),
+                format!("{x}\n3\n"),
+                "error on objects x={x}"
+            )
         }
     }
 }
