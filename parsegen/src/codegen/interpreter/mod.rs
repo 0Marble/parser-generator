@@ -8,7 +8,16 @@ pub mod runtime;
 pub mod rust;
 
 #[derive(Debug)]
-pub struct Error {}
+pub enum Error {
+    Io(std::io::Error),
+    Bytecode { code: usize, expl: String },
+}
+
+impl From<std::io::Error> for Error {
+    fn from(v: std::io::Error) -> Self {
+        Self::Io(v)
+    }
+}
 
 impl Display for Error {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
