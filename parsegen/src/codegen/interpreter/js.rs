@@ -87,6 +87,7 @@ impl Interpreter for Js {
                 ByteCode::Or(dest, lhs, rhs) => writeln!(w, "{} = {} || {};", dest.name, lhs, rhs)?,
                 ByteCode::Not(dest, val) => writeln!(w, "{} = !{};", dest.name, val)?,
                 ByteCode::Assign(dest, val) => writeln!(w, "{} = {};", dest.name, val)?,
+                ByteCode::Deref(a, b) => writeln!(w, "{} = {};", a.name, b.deref())?,
                 ByteCode::IndexGet(dest, arr, idx) => {
                     writeln!(w, "{} = {}[{}];", dest.name, arr.name, idx)?
                 }
@@ -120,7 +121,7 @@ impl Interpreter for Js {
                 ByteCode::IfEnd => writeln!(w, "}}")?,
                 ByteCode::Switch(val) => writeln!(w, "switch ({}) {{", val)?,
                 ByteCode::SwitchEnd => writeln!(w, "}}")?,
-                ByteCode::SwitchCaseStart(val) => writeln!(w, "case {}:", val)?,
+                ByteCode::SwitchCase(val) => writeln!(w, "case {}:", val)?,
                 ByteCode::SwitchDefaultCase => writeln!(w, "default:")?,
                 ByteCode::SwitchCaseEnd => writeln!(w, "break;")?,
                 ByteCode::Func(name, args) => {
