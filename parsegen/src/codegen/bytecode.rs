@@ -28,6 +28,22 @@ pub struct Ident {
     pub t: Type,
 }
 
+impl<'a> From<&'a Ident> for Val {
+    fn from(value: &'a Ident) -> Self {
+        match value.t {
+            Type::Void => unreachable!(),
+            Type::Bool => Self::Copy(value.clone()),
+            Type::Char => Self::Copy(value.clone()),
+            Type::Uint => Self::Copy(value.clone()),
+            Type::Array(_, _) => Self::Ref(value.clone()),
+            Type::String => Self::Ref(value.clone()),
+            Type::Vec(_) => Self::Ref(value.clone()),
+            Type::Struct(_) => Self::Ref(value.clone()),
+            Type::Ref(_) => Self::Copy(value.clone()),
+        }
+    }
+}
+
 impl<T1: Into<Rc<str>>, T2: Into<Type>> From<(T1, T2)> for Ident {
     fn from(value: (T1, T2)) -> Self {
         Self {
