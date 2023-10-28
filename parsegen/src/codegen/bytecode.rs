@@ -26,6 +26,7 @@ pub enum Val {
     Uint(usize),
     Copy(Ident),
     Ref(Ident),
+    Move(Ident),
 }
 
 impl Val {
@@ -36,6 +37,7 @@ impl Val {
             Val::Uint(_) => Type::Uint,
             Val::Copy(i) => i.t.clone(),
             Val::Ref(i) => Type::Ref(Box::new(i.t.clone())),
+            Val::Move(i) => i.t.clone(),
         }
     }
     pub fn deref(&self) -> Val {
@@ -89,13 +91,12 @@ pub enum ByteCode {
     Div(Ident, Val, Val),
     Mod(Ident, Val, Val),
     Eq(Ident, Val, Val),
+    Lt(Ident, Val, Val),
     Le(Ident, Val, Val),
-    Leq(Ident, Val, Val),
     And(Ident, Val, Val),
     Or(Ident, Val, Val),
     Not(Ident, Val),
     Assign(Ident, Val),
-    Deref(Ident, Val),
 
     IndexGet(Ident, Ident, Val),
     IndexSet(Ident, Val, Val),
@@ -165,6 +166,47 @@ pub mod programs {
         ];
 
         (res, "basic_add")
+    }
+
+    fn basic_if() -> (Vec<ByteCode>, &'static str) {
+        let a: Ident = ("a", T::Uint).into();
+        let cond: Ident = ("alt2", T::Bool).into();
+        let s: Ident = ("s", T::String).into();
+        let print: Ident = ("print", T::Void).into();
+        let read_line: Ident = ("read_line", T::String).into();
+        let str_to_int: Ident = ("str_to_int", T::Uint).into();
+
+        let res = vec![
+            B::Func(("main", T::Void).into(), vec![].into()),
+            B::Create(s.clone()),
+            B::Call(s.clone(), read_line.clone(), vec![].into()),
+            B::Call(
+                a.clone(),
+                str_to_int.clone(),
+                vec![Val::Ref(s.clone())].into(),
+            ),
+            B::Destroy(s.clone()),
+            B::Create(cond.clone()),
+            B::Lt(cond.clone(), Val::Copy(a.clone()), Val::Uint(2)),
+            B::If(Val::Copy(cond.clone())),
+            B::CallVoid(print.clone(), vec![Val::Char('A')].into()),
+            B::Else,
+            B::Eq(cond.clone(), Val::Copy(a.clone()), Val::Uint(2)),
+            B::If(Val::Copy(cond.clone())),
+            B::CallVoid(print.clone(), vec![Val::Char('B')].into()),
+            B::Else,
+            B::Eq(cond.clone(), Val::Copy(a.clone()), Val::Uint(3)),
+            B::If(Val::Copy(cond)),
+            B::CallVoid(print.clone(), vec![Val::Char('C')].into()),
+            B::Else,
+            B::CallVoid(print.clone(), vec![Val::Char('D')].into()),
+            B::IfEnd,
+            B::IfEnd,
+            B::IfEnd,
+            B::FuncEnd,
+        ];
+
+        (res, "basic_if")
     }
 
     fn basic_ref_obj() -> (Vec<ByteCode>, &'static str) {
@@ -301,7 +343,7 @@ pub mod programs {
             B::Create(i.clone()),
             B::Create(m.clone()),
             B::Create(d.clone()),
-            B::Le(d.clone(), Val::Copy(i.clone()), Val::Copy(n.clone())),
+            B::Lt(d.clone(), Val::Copy(i.clone()), Val::Copy(n.clone())),
             //
             B::While(Val::Copy(d.clone())),
             B::CallVoid(print.clone(), vec![Val::Copy(i.clone())].into()),
@@ -318,7 +360,7 @@ pub mod programs {
             B::IfEnd,
             //
             B::Add(i.clone(), Val::Copy(i.clone()), Val::Uint(1)),
-            B::Le(d.clone(), Val::Copy(i.clone()), Val::Copy(n.clone())),
+            B::Lt(d.clone(), Val::Copy(i.clone()), Val::Copy(n.clone())),
             B::WhileEnd,
             B::FuncEnd,
         ];
@@ -393,6 +435,7 @@ pub mod programs {
     fn programs_valid() {
         for (bc, name) in [
             add_nums(),
+            basic_if(),
             basic_copy_obj(),
             basic_ref_obj(),
             change_ref(),
@@ -413,6 +456,27 @@ pub mod programs {
                 tr.run_test(&s, &format!("{a}\n{b}\n")),
                 format!("{}\n", a + b),
                 "error on {name} a={a}, b={b}"
+            );
+        }
+
+        let (bc, name) = basic_if();
+        let s = tr.exec(&bc).unwrap();
+        for a in 0..10 {
+            assert_eq!(
+                tr.run_test(&s, &format!("{a}\n")),
+                format!(
+                    "{}\n",
+                    if a < 2 {
+                        'A'
+                    } else if a == 2 {
+                        'B'
+                    } else if a == 3 {
+                        'C'
+                    } else {
+                        'D'
+                    }
+                ),
+                "error on {name} a={a}"
             );
         }
 

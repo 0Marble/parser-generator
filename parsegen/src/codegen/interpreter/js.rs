@@ -5,7 +5,7 @@ use std::{
     io::{Cursor, Write},
 };
 
-use crate::codegen::bytecode::{ByteCode, Ident, Type, Val};
+use crate::codegen::bytecode::{ByteCode, Type, Val};
 
 use super::{Error, Interpreter};
 
@@ -31,7 +31,7 @@ impl Js {
             Type::Struct(name) => {
                 write!(w, "new {}()", name)
             }
-            Type::Ref(t) => Js::default_val(t, w),
+            Type::Ref(_) => write!(w, "null"),
         }
     }
 }
@@ -50,6 +50,7 @@ impl Display for Val {
                 Type::Struct(_) => write!(f, "{{... {}}}", n.name),
                 _ => write!(f, "{}", n.name),
             },
+            Val::Move(n) => write!(f, "{}", n.name),
             Val::Ref(n) => write!(f, "{}", n.name),
         }
     }
@@ -74,8 +75,8 @@ impl Interpreter for Js {
                 ByteCode::Mul(dest, lhs, rhs) => writeln!(w, "{} = {} * {};", dest.name, lhs, rhs)?,
                 ByteCode::Div(dest, lhs, rhs) => writeln!(w, "{} = {} / {};", dest.name, lhs, rhs)?,
                 ByteCode::Mod(dest, lhs, rhs) => writeln!(w, "{} = {} % {};", dest.name, lhs, rhs)?,
-                ByteCode::Le(dest, lhs, rhs) => writeln!(w, "{} = {} < {};", dest.name, lhs, rhs)?,
-                ByteCode::Leq(dest, lhs, rhs) => {
+                ByteCode::Lt(dest, lhs, rhs) => writeln!(w, "{} = {} < {};", dest.name, lhs, rhs)?,
+                ByteCode::Le(dest, lhs, rhs) => {
                     writeln!(w, "{} = {} <== {};", dest.name, lhs, rhs)?
                 }
                 ByteCode::Eq(dest, lhs, rhs) => {
@@ -87,7 +88,6 @@ impl Interpreter for Js {
                 ByteCode::Or(dest, lhs, rhs) => writeln!(w, "{} = {} || {};", dest.name, lhs, rhs)?,
                 ByteCode::Not(dest, val) => writeln!(w, "{} = !{};", dest.name, val)?,
                 ByteCode::Assign(dest, val) => writeln!(w, "{} = {};", dest.name, val)?,
-                ByteCode::Deref(a, b) => writeln!(w, "{} = {};", a.name, b.deref())?,
                 ByteCode::IndexGet(dest, arr, idx) => {
                     writeln!(w, "{} = {}[{}];", dest.name, arr.name, idx)?
                 }

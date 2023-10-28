@@ -8,6 +8,7 @@ pub struct Validator {}
 pub enum Error {
     TypeError(usize, ByteCode, &'static str),
     IndexOverflow(usize, ByteCode),
+    NotAllowed(usize, ByteCode, &'static str),
 }
 
 impl Display for Error {
@@ -41,7 +42,17 @@ impl Validator {
         for (i, bc) in bc.iter().enumerate() {
             match bc {
                 // register variable as created, check names
-                ByteCode::Create(_) => (),
+                ByteCode::Create(a) => {
+                    if let T::Ref(t) = &a.t {
+                        if t.is_basic() {
+                            return Err(Error::NotAllowed(
+                                i,
+                                bc.clone(),
+                                "Reference to basic type",
+                            ));
+                        }
+                    }
+                }
                 ByteCode::Destroy(_) => (),
                 // only numbers allowed
                 ByteCode::Add(a, b, c) => {
@@ -79,7 +90,7 @@ impl Validator {
                     }
                 }
                 // bool number number
-                ByteCode::Le(a, b, c) => {
+                ByteCode::Lt(a, b, c) => {
                     if a.t != T::Bool {
                         return Err(Error::TypeError(i, bc.clone(), "Expected a Bool lhs"));
                     }
@@ -87,7 +98,7 @@ impl Validator {
                         return Err(Error::TypeError(i, bc.clone(), "Expected Uint b and c"));
                     }
                 }
-                ByteCode::Leq(a, b, c) => {
+                ByteCode::Le(a, b, c) => {
                     if a.t != T::Bool {
                         return Err(Error::TypeError(i, bc.clone(), "Expected a Bool lhs"));
                     }
@@ -115,15 +126,6 @@ impl Validator {
                 ByteCode::Assign(a, b) => {
                     if a.t != b.get_type() {
                         return Err(Error::TypeError(i, bc.clone(), "Type mismatch"));
-                    }
-                }
-                ByteCode::Deref(a, b) => {
-                    if let T::Ref(t) = b.get_type() {
-                        if t.as_ref() != &a.t {
-                            return Err(Error::TypeError(i, bc.clone(), "Type mismatch"));
-                        }
-                    } else {
-                        return Err(Error::TypeError(i, bc.clone(), "Not a reference"));
                     }
                 }
                 // x is the same type as rhs elems, index in number
