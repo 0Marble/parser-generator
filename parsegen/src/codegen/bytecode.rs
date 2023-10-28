@@ -128,7 +128,7 @@ pub enum ByteCode {
 
 #[cfg(test)]
 pub mod programs {
-    use crate::codegen::{interpreter::Interpreter, validator::Validator};
+    use crate::codegen::{translator::Translator, validator::Validator};
 
     use super::*;
     use ByteCode as B;
@@ -413,7 +413,7 @@ pub mod programs {
         (res, "objects_copied")
     }
 
-    pub trait TestRunner: Interpreter {
+    pub trait TestRunner: Translator {
         fn run_test(&mut self, src: &str, input: &str) -> String;
     }
 
@@ -450,7 +450,7 @@ pub mod programs {
 
     pub fn gauntlet(tr: &mut dyn TestRunner) {
         let (bc, name) = add_nums();
-        let s = tr.exec(&bc).unwrap();
+        let s = tr.translate_program(&bc).unwrap();
         for (a, b) in [(0, 0), (1, 0), (10, 20), (2000, 1234)] {
             assert_eq!(
                 tr.run_test(&s, &format!("{a}\n{b}\n")),
@@ -460,7 +460,7 @@ pub mod programs {
         }
 
         let (bc, name) = basic_if();
-        let s = tr.exec(&bc).unwrap();
+        let s = tr.translate_program(&bc).unwrap();
         for a in 0..10 {
             assert_eq!(
                 tr.run_test(&s, &format!("{a}\n")),
@@ -481,7 +481,7 @@ pub mod programs {
         }
 
         let (bc, name) = basic_copy_obj();
-        let s = tr.exec(&bc).unwrap();
+        let s = tr.translate_program(&bc).unwrap();
         println!("{s}");
         for x in [0, 10, 20] {
             assert_eq!(
@@ -492,7 +492,7 @@ pub mod programs {
         }
 
         let (bc, name) = basic_ref_obj();
-        let s = tr.exec(&bc).unwrap();
+        let s = tr.translate_program(&bc).unwrap();
         for x in [0, 10, 20] {
             assert_eq!(
                 tr.run_test(&s, &x.to_string()),
@@ -502,7 +502,7 @@ pub mod programs {
         }
 
         let (bc, name) = change_ref();
-        let s = tr.exec(&bc).unwrap();
+        let s = tr.translate_program(&bc).unwrap();
         for (a, c) in [(0, 0), (0, 1), (1, 0), (100, 200)] {
             assert_eq!(
                 tr.run_test(&s, &format!("{}\n{}\n", a, c)),
@@ -512,7 +512,7 @@ pub mod programs {
         }
 
         let (bc, name) = fizz_buzz();
-        let s = tr.exec(&bc).unwrap();
+        let s = tr.translate_program(&bc).unwrap();
 
         for n in [0, 10, 100] {
             assert_eq!(
@@ -523,7 +523,7 @@ pub mod programs {
         }
 
         let (bc, name) = objects_copied();
-        let s = tr.exec(&bc).unwrap();
+        let s = tr.translate_program(&bc).unwrap();
         for x in [0, 10, 20, 30] {
             assert_eq!(
                 tr.run_test(&s, &x.to_string()),
