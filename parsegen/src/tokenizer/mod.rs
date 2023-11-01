@@ -36,6 +36,13 @@ impl Tokenizer {
         self.dfas.iter().map(|(t, _)| t.clone())
     }
 
+    pub fn dfa_count(&self) -> usize {
+        self.dfas.len()
+    }
+    pub fn dfas(&self) -> impl Iterator<Item = (Token, &Dfa<char>)> {
+        self.dfas.iter().map(|(t, d)| (t.clone(), d))
+    }
+
     pub fn new(regexes: Vec<(Token, Regex<char>)>) -> Self {
         Self {
             dfas: regexes.into_iter().map(|(t, r)| (t, r.compile())).collect(),
@@ -182,10 +189,10 @@ self.cur_states = [
             "assert_eq!(self.eat_char(c), None);
 return Some(tok);
 }}
-*old = new;
+*old = 1;
 }}
 self.garbage = true;
-self.status = [1; DFA_COUNT];
+// self.status = [1; DFA_COUNT];
 self.cur_word_end += 1;
 self.cur_states = [
 "
