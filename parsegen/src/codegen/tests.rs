@@ -203,7 +203,7 @@ funcend
     (
         name,
         PRELUDE.to_string() + src,
-        conv((0..20).map(|a| (a, a))),
+        conv((0..20).map(|a| (a, a.to_string() + "\n"))),
     )
 }
 
@@ -242,7 +242,7 @@ funcend
     (
         name,
         PRELUDE.to_string() + src,
-        conv((0..20).map(|a| (a, a))),
+        conv((0..20).map(|a| (a, a.to_string() + "\n"))),
     )
 }
 

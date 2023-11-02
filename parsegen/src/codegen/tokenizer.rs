@@ -311,7 +311,7 @@ funcend
 #[cfg(test)]
 mod tests {
     use crate::{
-        codegen::{bytecode_parser::BytecodeParser, translator::js::Js},
+        codegen::{assembler::BytecodeParser, translator::js::Js},
         regex::regular_expression::Regex,
         tokenizer::Token,
     };
