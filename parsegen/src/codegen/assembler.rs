@@ -101,6 +101,18 @@ impl Assembler {
                 let rhs = self.parse_val(split);
                 self.res.push(ByteCode::Le(res, lhs, rhs));
             }
+            "and" => {
+                let res = self.parse_ident(split);
+                let lhs = self.parse_val(split);
+                let rhs = self.parse_val(split);
+                self.res.push(ByteCode::And(res, lhs, rhs));
+            }
+            "or" => {
+                let res = self.parse_ident(split);
+                let lhs = self.parse_val(split);
+                let rhs = self.parse_val(split);
+                self.res.push(ByteCode::Or(res, lhs, rhs));
+            }
             "not" => {
                 let res = self.parse_ident(split);
                 let rhs = self.parse_val(split);

@@ -86,7 +86,7 @@ function deep_copy_obj(a) {{
                 writeln!(self.buf, "{} = {} < {};", dest.name, lhs, rhs)?
             }
             ByteCode::Le(dest, lhs, rhs) => {
-                writeln!(self.buf, "{} = {} <== {};", dest.name, lhs, rhs)?
+                writeln!(self.buf, "{} = {} <= {};", dest.name, lhs, rhs)?
             }
             ByteCode::Eq(dest, lhs, rhs) => {
                 writeln!(self.buf, "{} = {} === {};", dest.name, lhs, rhs)?
@@ -212,7 +212,12 @@ impl Translator for Js {
         self.eat_bc(op).unwrap();
     }
 
-    fn finalize(&mut self) {}
+    fn finalize(&mut self) {
+        std::fs::File::create(format!("tests/dump.js"))
+            .unwrap()
+            .write_all(&self.buf)
+            .unwrap();
+    }
 }
 
 #[cfg(test)]
