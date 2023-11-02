@@ -47,16 +47,14 @@ impl BytecodeParser {
 
         let Some(op_name) = split.next() else { return; };
 
-        match op_name {
+        match op_name.trim_start() {
             "//" => (),
             "create" => {
                 let var_name = split
                     .next()
                     .unwrap_or_else(|| panic!("No var_name given on line {}", self.line));
-                let type_name = split
-                    .next()
-                    .unwrap_or_else(|| panic!("No type_name given on line {}", self.line));
-                let ident: Ident = (var_name, Type::from_str(type_name).unwrap()).into();
+                let t = self.parse_type(split);
+                let ident: Ident = (var_name, t).into();
                 self.add_local(ident.clone());
                 self.res.push(ByteCode::Create(ident));
             }
@@ -187,11 +185,21 @@ impl BytecodeParser {
             "caseend" => self.res.push(ByteCode::SwitchCaseEnd),
 
             "func" => {
-                let func = self.parse_ident(split);
+                let func = split
+                    .next()
+                    .unwrap_or_else(|| panic!("Expected func name on line {}", self.line));
+                let ret = self.parse_type(split);
+                let func: Ident = (func, ret).into();
                 let arg_cnt = self.parse_arc_count(split);
                 let mut args = vec![];
                 for _ in 0..arg_cnt {
-                    args.push(self.parse_ident(split));
+                    let name = split
+                        .next()
+                        .unwrap_or_else(|| panic!("Expected arg name on line {}", self.line));
+                    let t = self.parse_type(split);
+                    let id: Ident = (name, t).into();
+                    self.add_local(id.clone());
+                    args.push(id);
                 }
                 self.res.push(ByteCode::Func(func, args.into()));
             }
@@ -214,11 +222,16 @@ impl BytecodeParser {
                 self.cur_struct = Some((t, vec![]));
             }
             "field" => {
-                let id = self.parse_ident(split);
+                let name = split
+                    .next()
+                    .unwrap_or_else(|| panic!("Expected field name on line {}", self.line));
+                let t = self.parse_type(split);
                 let (_, fields) = self
                     .cur_struct
                     .as_mut()
                     .unwrap_or_else(|| panic!("Field to no struct at line {}", self.line));
+
+                let id: Ident = (name, t).into();
                 fields.push(id.clone());
                 self.res.push(ByteCode::Field(id));
             }
@@ -329,6 +342,69 @@ impl BytecodeParser {
                 .clone()
         } else {
             panic!("{:?} is not a struct on line {}", s, self.line);
+        }
+    }
+
+    fn parse_type<'a>(&mut self, split: &mut impl Iterator<Item = &'a str>) -> Type {
+        match split
+            .next()
+            .unwrap_or_else(|| panic!("Expected type on line {}", self.line))
+        {
+            "void" => Type::Void,
+            "bool" => Type::Bool,
+            "char" => Type::Char,
+            "uint" => Type::Uint,
+            "string" => Type::String,
+            "arr" => {
+                let t = self.parse_type(split);
+                let cnt = usize::from_str(
+                    split
+                        .next()
+                        .unwrap_or_else(|| panic!("Expected array size on line {}", self.line)),
+                )
+                .unwrap_or_else(|e| panic!("Expected array size: {e} on line {}", self.line));
+                Type::Array(Box::new(t), cnt)
+            }
+            "vec" => {
+                let t = self.parse_type(split);
+                Type::Vec(Box::new(t))
+            }
+            "ref" => {
+                let t = self.parse_type(split);
+                Type::Ref(Box::new(t))
+            }
+            s => Type::Struct(s.into()),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn math() -> String {
+        "
+func main void 0
+create a uint
+create b uint
+assign a 10
+assign b 20
+create c uint
+// c = a + b
+add c cp a cp b
+funcend
+"
+        .to_string()
+    }
+
+    #[test]
+    fn compile() {
+        let mut p = BytecodeParser::new();
+        for s in math().lines() {
+            p.parse_op(&s);
+        }
+        for (i, bc) in p.finish().into_iter().enumerate() {
+            println!("[{i}] {:?}", bc);
         }
     }
 }

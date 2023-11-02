@@ -1,541 +1,336 @@
-use crate::{
-    codegen::{bytecode::Ident, validator::Validator},
-    regex::state_machine::Dfa,
-    tokenizer::{Token, Tokenizer},
-};
+use std::io::{Cursor, Write};
 
-use super::{bytecode::ByteCode, translator::Translator};
+use crate::tokenizer::Tokenizer;
 
-use crate::codegen::bytecode::ByteCode as B;
-use crate::codegen::bytecode::Type as T;
-use crate::codegen::bytecode::Val as V;
-pub trait TokenizerCodegen {
-    fn gen_code(&mut self, t: &Tokenizer) -> Vec<String>;
-}
+use super::translator::Translator;
 
-pub struct BytecodeTokenizerCodegen {
-    translator: Box<dyn Translator>,
-}
+pub trait TokenizerGenerator: Translator {
+    fn generate(&mut self, t: &Tokenizer) -> String {
+        let mut buf = vec![];
+        let mut w = Cursor::new(&mut buf);
+        let w = &mut w;
 
-impl BytecodeTokenizerCodegen {
-    pub fn new(translator: Box<dyn Translator>) -> Self {
-        Self { translator }
-    }
-}
+        let dfa_count = t.dfa_count();
+        write!(
+            w,
+            "
+// kind: 0 - none, 1 - garbage, i + 2 - ith token
+struct Token
+field kind uint
+field start uint
+field end uint
+structend
 
-fn token_struct(t: &Tokenizer, bc: &mut Vec<ByteCode>) {
-    bc.push(B::Struct("Token".into()));
-    bc.push(B::Field(("kind", T::Uint).into()));
-    bc.push(B::Field(("start", T::Uint).into()));
-    bc.push(B::Field(("end", T::Uint).into()));
-    bc.push(B::StructEnd);
-}
+struct Tokenizer
+field garbage bool
+field state arr uint {dfa_count}
+field status arr uint {dfa_count}
+field word_end uint
+field word_start uint
+structend
 
-fn tokenizer_struct(t: &Tokenizer, bc: &mut Vec<ByteCode>) {
-    bc.push(B::Struct("Tokenizer".into()));
-    bc.push(B::Field(("garbage", T::Bool).into()));
-    bc.push(B::Field(("cur_word_start", T::Uint).into()));
-    bc.push(B::Field(("cur_word_end", T::Uint).into()));
-    bc.push(B::Field(("cur_state", T::Array(Box::new(T::Uint), t.dfa_count())).into()).into());
-    bc.push(B::Field(("cur_status", T::Array(Box::new(T::Uint), t.dfa_count())).into()).into());
-    bc.push(B::StructEnd);
-}
+// status: 0 - couldnt move, 1 - moved, 2 - in end state
+struct StepResult
+field state uint
+field status uint
+structend
 
-fn all_dfa_step_funcs(t: &Tokenizer, bc: &mut Vec<ByteCode>) {
-    bc.push(B::Struct("StepResult".into()));
-    bc.push(B::Field(("state", T::Uint).into()));
-    bc.push(B::Field(("status", T::Uint).into()));
-    bc.push(B::StructEnd);
+func new_tokenizer Tokenizer 0
+create t Tokenizer
+dotset t garbage false
+dotset t word_end 0
+dotset t word_start 0
 
-    for (tok, dfa) in t.dfas() {
-        let c: Ident = ("c", T::Char).into();
-        let state: Ident = ("state", T::Uint).into();
-        let status: Ident = ("status", T::Uint).into();
-        let res: Ident = ("res", T::Struct("StepResult".into())).into();
+create ref_state ref arr uint {dfa_count}
+create ref_status ref arr uint {dfa_count}
+",
+        )
+        .unwrap();
 
-        bc.push(B::Func(
-            (
-                format!("step_{}", tok.name().to_lowercase()),
-                T::Struct("StepResult".into()),
-            )
-                .into(),
-            vec![c.clone(), state.clone()].into(),
-        ));
-        bc.push(B::Create(res.clone()));
-        bc.push(B::DotSet(
-            res.clone(),
-            state.clone(),
-            V::Copy(state.clone()),
-        ));
-        bc.push(B::DotSet(res.clone(), status.clone(), V::Uint(0)));
-
-        bc.push(B::Switch(V::Copy(state.clone())));
-        for n in dfa.nodes() {
-            bc.push(B::SwitchCase(V::Uint(n)));
-            bc.push(B::Switch(V::Copy(c.clone())));
-
-            for (_, l, next) in dfa.edges_from(n) {
-                bc.push(B::SwitchCase(V::Char(l)));
-                bc.push(B::DotSet(res.clone(), state.clone(), V::Uint(next)));
-                let step_status = if dfa.is_end_node(next) { 2 } else { 1 };
-                bc.push(B::DotSet(res.clone(), status.clone(), V::Uint(step_status)));
-                bc.push(B::Ret(V::Move(res.clone())));
-
-                bc.push(B::SwitchCaseEnd);
-            }
-            bc.push(B::SwitchDefaultCase);
-            bc.push(B::Ret(V::Move(res.clone())));
-            bc.push(B::SwitchCaseEnd);
-
-            bc.push(B::SwitchEnd);
-            bc.push(B::SwitchCaseEnd);
+        for (i, (_, dfa)) in t.dfas().enumerate() {
+            writeln!(w, "indexset ref_state {i} {}", dfa.start_node()).unwrap();
+            writeln!(w, "indexset ref_status {i} 0").unwrap();
         }
-        bc.push(B::SwitchDefaultCase);
-        bc.push(B::Ret(V::Move(res.clone())));
-        bc.push(B::SwitchCaseEnd);
-        bc.push(B::SwitchEnd);
-        bc.push(B::FuncEnd);
-    }
-}
+        write!(
+            w,
+            "
 
-fn new_tokenizer(t: &Tokenizer, bc: &mut Vec<ByteCode>) {
-    let res: Ident = ("res", T::Struct("Tokenizer".into())).into();
-    let status: Ident = ("cur_status", T::Array(Box::new(T::Uint), t.dfa_count())).into();
-    let state: Ident = ("cur_state", T::Array(Box::new(T::Uint), t.dfa_count())).into();
+ret mv t
+funcend
+"
+        )
+        .unwrap();
 
-    bc.push(B::Func(
-        ("new_tokenizer", T::Struct("Tokenizer".into())).into(),
-        vec![].into(),
-    ));
-    bc.push(B::Create(res.clone()));
-    bc.push(B::DotSet(
-        res.clone(),
-        ("cur_word_end", T::Uint).into(),
-        V::Uint(0),
-    ));
-    bc.push(B::DotSet(
-        res.clone(),
-        ("cur_word_start", T::Uint).into(),
-        V::Uint(0),
-    ));
-    bc.push(B::DotSet(
-        res.clone(),
-        ("garbage", T::Bool).into(),
-        V::Bool(false),
-    ));
-    bc.push(B::Create(status.clone()));
-    bc.push(B::Create(state.clone()));
-    for (i, (_, dfa)) in t.dfas().enumerate() {
-        bc.push(B::IndexSet(status.clone(), V::Uint(i), V::Uint(1)));
-        bc.push(B::IndexSet(
-            state.clone(),
-            V::Uint(i),
-            V::Uint(dfa.start_node()),
-        ));
-    }
-    bc.push(B::DotSet(
-        res.clone(),
-        state.clone(),
-        V::Move(state.clone()),
-    ));
-    bc.push(B::DotSet(
-        res.clone(),
-        status.clone(),
-        V::Move(status.clone()),
-    ));
-    bc.push(B::Ret(V::Move(res.clone())));
-    bc.push(B::FuncEnd);
-}
-fn eat_char(t: &Tokenizer, bc: &mut Vec<ByteCode>) {
-    let new_status: Ident = ("new_status", T::Array(Box::new(T::Uint), t.dfa_count())).into();
-    let consumed: Ident = ("consumed", T::Bool).into();
+        for (i, (_, dfa)) in t.dfas().enumerate() {
+            write!(
+                w,
+                "
+func step{i} StepResult 2 c char state uint
+create res StepResult
+dotset res status 0
+dotset res state cp state
 
-    let cur_status: Ident = ("cur_status", T::Array(Box::new(T::Uint), t.dfa_count())).into();
-    let cur_state: Ident = ("cur_state", T::Array(Box::new(T::Uint), t.dfa_count())).into();
-
-    let cur_state_ref: Ident = (
-        "cur_state_ref",
-        T::Ref(Box::new(T::Array(Box::new(T::Uint), t.dfa_count()))),
-    )
-        .into();
-    let cur_status_ref: Ident = (
-        "cur_status_ref",
-        T::Ref(Box::new(T::Array(Box::new(T::Uint), t.dfa_count()))),
-    )
-        .into();
-    let tokenizer: Ident = ("tokenizer", T::Ref(Box::new(T::Struct("Tokenizer".into())))).into();
-    let c: Ident = ("c", T::Char).into();
-    let res: Ident = ("res", T::Struct("Token".into())).into();
-
-    bc.push(B::Func(
-        ("eat_char", res.t.clone()).into(),
-        vec![tokenizer.clone(), c.clone()].into(),
-    ));
-    bc.push(B::Create(new_status.clone()));
-    bc.push(B::Create(consumed.clone()));
-    bc.push(B::Create(cur_status_ref.clone()));
-    bc.push(B::Create(cur_state_ref.clone()));
-    bc.push(B::DotGet(
-        cur_status_ref.clone(),
-        tokenizer.clone(),
-        cur_status.clone(),
-    ));
-    bc.push(B::DotGet(
-        cur_state_ref.clone(),
-        tokenizer.clone(),
-        cur_state.clone(),
-    ));
-
-    bc.push(B::Assign(consumed.clone(), V::Bool(false)));
-    for i in 0..t.dfa_count() {
-        bc.push(B::IndexSet(new_status.clone(), V::Uint(i), V::Uint(0)));
-    }
-    let status: Ident = ("status", T::Uint).into();
-    let state: Ident = ("state", T::Uint).into();
-    bc.push(B::Create(status.clone()));
-    bc.push(B::Create(state.clone()));
-    let cond: Ident = ("cond", T::Bool).into();
-    bc.push(B::Create(cond.clone()));
-    let step_res: Ident = ("step_res", T::Struct("StepResult".into())).into();
-    bc.push(B::Create(step_res.clone()));
-
-    for (i, (tok, _)) in t.dfas().enumerate() {
-        bc.push(B::IndexGet(
-            status.clone(),
-            cur_status_ref.clone(),
-            V::Uint(i),
-        ));
-        bc.push(B::Eq(cond.clone(), V::Copy(status.clone()), V::Uint(0)));
-        bc.push(B::Not(cond.clone(), V::Copy(cond.clone())));
-        bc.push(B::If(V::Copy(cond.clone())));
-
-        bc.push(B::IndexGet(
-            state.clone(),
-            cur_state_ref.clone(),
-            V::Uint(i),
-        ));
-        bc.push(B::Call(
-            step_res.clone(),
-            (
-                format!("step_{}", tok.name().to_lowercase()),
-                T::Struct("StepResult".into()),
+switch cp state
+"
             )
-                .into(),
-            vec![V::Copy(c.clone()), V::Copy(state.clone())].into(),
-        ));
-        bc.push(B::DotGet(status.clone(), step_res.clone(), status.clone()));
-        bc.push(B::DotGet(state.clone(), step_res.clone(), state.clone()));
-        bc.push(B::IndexSet(
-            cur_state_ref.clone(),
-            V::Uint(i),
-            V::Copy(state.clone()),
-        ));
-        bc.push(B::IndexSet(
-            new_status.clone(),
-            V::Uint(i),
-            V::Copy(status.clone()),
-        ));
-        bc.push(B::Eq(cond.clone(), V::Copy(status.clone()), V::Uint(0)));
-        bc.push(B::Not(cond.clone(), V::Copy(cond.clone())));
-        bc.push(B::If(V::Copy(cond.clone())));
-        bc.push(B::Assign(consumed.clone(), V::Bool(true)));
-        bc.push(B::IfEnd);
-        bc.push(B::IfEnd);
-    }
+            .unwrap();
 
-    let cur_word_end: Ident = ("cur_word_end", T::Uint).into();
-    let cur_word_start: Ident = ("cur_word_start", T::Uint).into();
-    bc.push(B::Create(cur_word_end.clone()));
-    bc.push(B::Create(cur_word_start.clone()));
-    let res: Ident = ("res", T::Struct("Token".into())).into();
-    bc.push(B::Create(res.clone()));
-    bc.push(B::DotSet(res.clone(), ("kind", T::Uint).into(), V::Uint(0)));
-    bc.push(B::DotSet(
-        res.clone(),
-        ("start", T::Uint).into(),
-        V::Uint(0),
-    ));
-    bc.push(B::DotSet(res.clone(), ("end", T::Uint).into(), V::Uint(0)));
+            for node in dfa.nodes() {
+                write!(
+                    w,
+                    "
+case {node}
+switch cp c
+"
+                )
+                .unwrap();
+                for (_, l, to) in dfa.edges_from(node) {
+                    let status = if dfa.is_end_node(to) { 2 } else { 1 };
+                    write!(
+                        w,
+                        "
+case '{l}'
+dotset res state {to}
+dotset res status {status}
+ret mv res
+caseend
+"
+                    )
+                    .unwrap()
+                }
+                write!(
+                    w,
+                    "
+default
+ret mv res
+caseend
+switchend
+caseend
+"
+                )
+                .unwrap();
+            }
+        }
+        write!(
+            w,
+            "
+default
+ret mv res
+caseend
+switchend
+ret mv res
+funcend
+"
+        )
+        .unwrap();
 
-    bc.push(B::If(V::Copy(consumed.clone())));
-    bc.push(B::Add(
-        cur_word_end.clone(),
-        V::Copy(cur_word_end.clone()),
-        V::Uint(1),
-    ));
-    bc.push(B::DotSet(
-        tokenizer.clone(),
-        cur_word_end.clone(),
-        V::Copy(cur_word_end.clone()),
-    ));
-    bc.push(B::DotSet(
-        tokenizer.clone(),
-        cur_status.clone(),
-        V::Move(new_status.clone()),
-    ));
-    bc.push(B::DotGet(
-        cond.clone(),
-        tokenizer.clone(),
-        ("garbage", T::Bool).into(),
-    ));
-    bc.push(B::DotSet(res.clone(), ("end", T::Uint).into(), V::Uint(0)));
+        write!(
+            w,
+            "
+func eat_char Token 2 t ref Tokenizer c char
+create consumed bool
+assign consumed false
+create state_ref ref arr uint {dfa_count}
+dotget state_ref t state
+create status_ref ref arr uint {dfa_count}
+dotget status_ref t status 
+create new_status arr uint {dfa_count}
+"
+        )
+        .unwrap();
 
-    bc.push(B::If(V::Copy(cond.clone())));
-    bc.push(B::DotGet(
-        cur_word_end.clone(),
-        tokenizer.clone(),
-        cur_word_end.clone(),
-    ));
-    bc.push(B::DotGet(
-        cur_word_start.clone(),
-        tokenizer.clone(),
-        cur_word_start.clone(),
-    ));
-    bc.push(B::Sub(
-        cur_word_end.clone(),
-        V::Copy(cur_word_end.clone()),
-        V::Uint(1),
-    ));
-    bc.push(B::DotSet(
-        tokenizer.clone(),
-        cur_word_end.clone(),
-        V::Copy(cur_word_end.clone()),
-    ));
+        for i in 0..dfa_count {
+            writeln!(w, "indexset new_status {i} 0").unwrap();
+        }
+        write!(
+            w,
+            "
+create cond bool
+create status uint
+create state uint
+create step_res StepResult
+"
+        )
+        .unwrap();
+        for (i, (_, _)) in t.dfas().enumerate() {
+            write!(
+                w,
+                "
+indexget status status_ref {i}
+eq cond cp status 0
+not cond cp cond
+if cp cond 
+indexget state state_ref {i}
+call step_res step{i} 2 cp c cp state
+dotget state step_res state
+dotget status step_res status
+indexset new_status {i} cp status
+indexset state_ref {i} cp state
+eq cond cp status 0
+not cond cp cond
 
-    bc.push(B::DotSet(res.clone(), ("kind", T::Uint).into(), V::Uint(1)));
-    bc.push(B::DotSet(
-        res.clone(),
-        ("start", T::Uint).into(),
-        V::Copy(cur_word_start.clone()),
-    ));
-    bc.push(B::DotSet(
-        res.clone(),
-        ("end", T::Uint).into(),
-        V::Copy(cur_word_end.clone()),
-    ));
-    bc.push(B::DotSet(
-        tokenizer.clone(),
-        cur_word_start.clone(),
-        V::Copy(cur_word_end.clone()),
-    ));
-    bc.push(B::Add(
-        cur_word_end.clone(),
-        V::Copy(cur_word_end.clone()),
-        V::Uint(1),
-    ));
-    bc.push(B::DotSet(
-        tokenizer.clone(),
-        cur_word_end.clone(),
-        V::Copy(cur_word_end.clone()),
-    ));
-    bc.push(B::Ret(V::Move(res.clone())));
-    bc.push(B::IfEnd); // if tokenizer.garbage
-    bc.push(B::Ret(V::Move(res.clone())));
-    bc.push(B::IfEnd); // if consumed
+if cp cond
+assign consumed cp cond
+ifend
 
-    let new: Ident = ("n", T::Uint).into();
-    let old: Ident = ("o", T::Uint).into();
-    bc.push(B::Create(new.clone()));
-    bc.push(B::Create(old.clone()));
-    let cond2: Ident = ("cond2", T::Bool).into();
-    bc.push(B::Create(cond2.clone()));
+ifend
+",
+            )
+            .unwrap()
+        }
 
-    for (i, (_, dfa)) in t.dfas().enumerate() {
-        bc.push(B::IndexGet(new.clone(), new_status.clone(), V::Uint(i)));
-        bc.push(B::IndexGet(old.clone(), cur_status_ref.clone(), V::Uint(i)));
-        bc.push(B::Eq(cond.clone(), V::Copy(new.clone()), V::Uint(0)));
-        bc.push(B::Eq(cond2.clone(), V::Copy(old.clone()), V::Uint(2)));
+        write!(
+            w,
+            "
+create word_end uint
+create word_start uint
+dotget word_end t word_end
+dotget word_start t word_start
+        
+create garbage bool
+dotget garbage t garbage
 
-        bc.push(B::And(
-            cond.clone(),
-            V::Copy(cond.clone()),
-            V::Copy(cond2.clone()),
-        ));
+create res Token
+dotset res kind 0
+dotset res start cp word_start
+dotset res end cp word_end
 
-        bc.push(B::IndexSet(
-            cur_state_ref.clone(),
-            V::Uint(i),
-            V::Uint(dfa.start_node()),
-        ));
+if cp consumed
+add word_end cp word_end 1
+dotset t status mv new_status
 
-        bc.push(B::If(V::Copy(cond.clone())));
+if cp garbage
+sub word_start cp word_end 1
+dotset t word_end cp word_end
+dotset t word_start cp word_start
+dotset t garbage false
 
-        bc.push(B::DotSet(
-            res.clone(),
-            ("kind", T::Uint).into(),
-            V::Uint(i + 2),
-        ));
-        bc.push(B::DotGet(
-            cur_word_end.clone(),
-            tokenizer.clone(),
-            cur_word_end.clone(),
-        ));
-        bc.push(B::DotGet(
-            cur_word_start.clone(),
-            tokenizer.clone(),
-            cur_word_start.clone(),
-        ));
-        bc.push(B::DotSet(
-            tokenizer.clone(),
-            cur_word_start.clone(),
-            V::Copy(cur_word_end.clone()),
-        ));
-        bc.push(B::DotSet(
-            res.clone(),
-            ("start", T::Uint).into(),
-            V::Copy(cur_word_start.clone()),
-        ));
-        bc.push(B::DotSet(
-            res.clone(),
-            ("end", T::Uint).into(),
-            V::Copy(cur_word_end.clone()),
-        ));
+ifend
+ret mv res
+ifend
 
-        bc.push(B::IndexSet(cur_status_ref.clone(), V::Uint(i), V::Uint(1)));
+create a uint
+create b uint
+create cond2 bool
+create not_has_res bool
+assign not_has_res false
+"
+        )
+        .unwrap();
 
-        bc.push(B::Ret(V::Move(res.clone())));
-        bc.push(B::IfEnd); // if new == 0 && old == 2
-        bc.push(B::IndexSet(cur_state_ref.clone(), V::Uint(i), V::Uint(1)));
-    }
-    bc.push(B::DotSet(
-        tokenizer.clone(),
-        ("garbage", T::Bool).into(),
-        V::Bool(true),
-    ));
-    bc.push(B::Add(
-        cur_word_end.clone(),
-        V::Copy(cur_word_end.clone()),
-        V::Uint(1),
-    ));
-    bc.push(B::DotSet(
-        tokenizer.clone(),
-        cur_word_end.clone(),
-        V::Copy(cur_word_end.clone()),
-    ));
-    bc.push(B::Ret(V::Move(res.clone())));
+        for (i, (_, dfa)) in t.dfas().enumerate() {
+            write!(
+                w,
+                "
+indexget a status_ref {i}
+indexget b new_status {i}
+eq cond cp a 2
+eq cond2 cp b 0
+and cond cp cond cp cond2
+and cond cp has_res cp cond
+if cond
+dotset res kind {}
+assign not_has_res false
+ifend
 
-    bc.push(B::FuncEnd);
-}
+indexset status_ref {i} 1
+indexset state_ref {i} {}
 
-fn gen_flush(t: &Tokenizer, bc: &mut Vec<ByteCode>) {
-    let tokenizer: Ident = ("tokenizer", T::Ref(Box::new(T::Struct("Tokenizer".into())))).into();
-    bc.push(B::Func(
-        ("flush", T::Struct("Token".into())).into(),
-        vec![tokenizer.clone()].into(),
-    ));
-    let status: Ident = ("status", T::Uint).into();
-    bc.push(B::Create(status.clone()));
-    let cond: Ident = ("cond", T::Bool).into();
-    bc.push(B::Create(cond.clone()));
-    let cur_status_ref: Ident = (
-        "cur_status_ref",
-        T::Ref(Box::new(T::Array(Box::new(T::Uint), t.dfa_count()))),
-    )
-        .into();
-    bc.push(B::Create(cur_status_ref.clone()));
-    bc.push(B::DotGet(
-        cur_status_ref.clone(),
-        tokenizer.clone(),
-        ("cur_status", T::Array(Box::new(T::Uint), t.dfa_count())).into(),
-    ));
-    let cur_word_start: Ident = ("cur_word_start", T::Uint).into();
-    let cur_word_end: Ident = ("cur_word_end", T::Uint).into();
-    bc.push(B::DotGet(
-        cur_word_end.clone(),
-        tokenizer.clone(),
-        cur_word_end.clone(),
-    ));
-    bc.push(B::DotGet(
-        cur_word_start.clone(),
-        tokenizer.clone(),
-        cur_word_start.clone(),
-    ));
-    let res: Ident = ("res", T::Struct("Token".into())).into();
-    bc.push(B::Create(res.clone()));
-    bc.push(B::DotSet(res.clone(), ("kind", T::Uint).into(), V::Uint(0)));
-    bc.push(B::DotSet(
-        res.clone(),
-        ("start", T::Uint).into(),
-        V::Copy(cur_word_start.clone()),
-    ));
-    bc.push(B::DotSet(
-        res.clone(),
-        ("end", T::Uint).into(),
-        V::Copy(cur_word_end.clone()),
-    ));
+",
+                i + 2,
+                dfa.start_node()
+            )
+            .unwrap();
+        }
 
-    for (i, (_, _)) in t.dfas().enumerate() {
-        bc.push(B::IndexGet(
-            status.clone(),
-            cur_status_ref.clone(),
-            V::Uint(i),
-        ));
-        bc.push(B::Eq(cond.clone(), V::Copy(status.clone()), V::Uint(2)));
-        bc.push(B::If(V::Copy(cond.clone())));
-        bc.push(B::DotSet(
-            res.clone(),
-            ("kind", T::Uint).into(),
-            V::Uint(i + 2),
-        ));
-        bc.push(B::Add(
-            cur_word_end.clone(),
-            V::Copy(cur_word_end.clone()),
-            V::Uint(1),
-        ));
-        bc.push(B::DotSet(
-            res.clone(),
-            ("end", T::Uint).into(),
-            V::Copy(cur_word_end.clone()),
-        ));
-        bc.push(B::Ret(V::Move(res.clone())));
+        write!(
+            w,
+            "
+not cond cp not_has_res
+if cp cond
+ret mv res
+ifend
 
-        bc.push(B::IfEnd); // if status == 2
-    }
+dotset t garbage true
+add word_end cp word_end 1
+dotset t word_end cp word_end
+ret cp res
+funcend
 
-    bc.push(B::Eq(
-        cond.clone(),
-        V::Copy(cur_word_end.clone()),
-        V::Copy(cur_word_start.clone()),
-    ));
-    bc.push(B::Not(cond.clone(), V::Copy(cond.clone())));
-    bc.push(B::If(V::Copy(cond.clone())));
-    bc.push(B::DotSet(res.clone(), ("kind", T::Uint).into(), V::Uint(1)));
-    bc.push(B::Ret(V::Move(res.clone())));
-    bc.push(B::IfEnd); // if cur_word_end != cur_word_start
-    bc.push(B::Ret(V::Move(res.clone())));
+func flush Token 1 t ref Tokenizer
+create status uint
+create cond bool
+create i uint
+assign i 0
+create status_ref ref arr uint {dfa_count}
+dotget status_ref t status
 
-    bc.push(B::FuncEnd); // fn flush()
-}
+create word_end uint
+create word_start uint
+dotget word_end t word_end
+dotget word_start t word_start
+create res Token
+dotset res kind 0
+dotset res start cp word_start
+dotset res end cp word_end
 
-impl TokenizerCodegen for BytecodeTokenizerCodegen {
-    fn gen_code(&mut self, t: &Tokenizer) -> Vec<String> {
-        let mut bc = vec![];
+le cond cp i {dfa_count}
+while cp cond
+indexget status status_ref cp i
+eq cond cp status 2
 
-        token_struct(t, &mut bc);
-        tokenizer_struct(t, &mut bc);
-        all_dfa_step_funcs(t, &mut bc);
-        new_tokenizer(t, &mut bc);
-        eat_char(t, &mut bc);
-        gen_flush(t, &mut bc);
+if cp cond
+add i cp i 2
+dotset res kind cp i
+add word_end cp word_end 1 
+dotset res end word_end
+ret mv res
+ifend
 
-        assert_eq!(Validator::new().validate_bc(&bc), Ok(()));
-        let res = vec![self.translator.translate_program(&bc).unwrap()];
-        res
+add i cp i 1
+le cond cp i {dfa_count}
+whilend
+
+eq cond cp word_start cp word_end
+not cond cp cond
+if cond
+dotset res kind 1
+ret mv res
+ifend
+
+ret mv res
+funcend
+"
+        )
+        .unwrap();
+
+        String::from_utf8(buf).unwrap()
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::{codegen::translator::js::Js, regex::regular_expression::Regex};
+    use crate::{
+        codegen::{bytecode_parser::BytecodeParser, translator::js::Js},
+        regex::regular_expression::Regex,
+        tokenizer::Token,
+    };
 
     use super::*;
 
+    impl TokenizerGenerator for Js {}
+
     #[test]
     fn idk() {
-        let t = Tokenizer::new(vec![(Token::new("Hello"), Regex::Base('a'))]);
-        let mut gen = BytecodeTokenizerCodegen::new(Box::new(Js));
-        let res = gen.gen_code(&t);
-        println!("{}", res[0]);
-        panic!();
+        let t = Tokenizer::new(vec![(Token::new("Tok"), Regex::Base('a'))]);
+        let s = Js.generate(&t);
+        println!("{}", s);
+        let mut p = BytecodeParser::new();
+        for s in s.lines() {
+            p.parse_op(s);
+        }
+        let js_source = Js.translate_program(&p.finish()).unwrap();
+        println!("{}", js_source);
+        panic!()
     }
 }

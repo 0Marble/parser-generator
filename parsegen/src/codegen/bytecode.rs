@@ -1,4 +1,4 @@
-use std::{convert::Infallible, rc::Rc, str::FromStr};
+use std::rc::Rc;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Type {
@@ -11,34 +11,6 @@ pub enum Type {
     Vec(Box<Type>),
     Struct(Rc<str>),
     Ref(Box<Type>),
-}
-
-impl FromStr for Type {
-    type Err = Infallible;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        let mut split = s.split_whitespace();
-        match split.next().unwrap() {
-            "bool" => Ok(Type::Bool),
-            "char" => Ok(Type::Char),
-            "uint" => Ok(Type::Uint),
-            "string" => Ok(Type::String),
-            "arr" => {
-                let t = Type::from_str(split.next().unwrap()).unwrap();
-                let cnt = usize::from_str(split.next().unwrap()).unwrap();
-                Ok(Type::Array(Box::new(t), cnt))
-            }
-            "vec" => {
-                let t = Type::from_str(split.next().unwrap()).unwrap();
-                Ok(Type::Vec(Box::new(t)))
-            }
-            "ref" => {
-                let t = Type::from_str(split.next().unwrap()).unwrap();
-                Ok(Type::Ref(Box::new(t)))
-            }
-            s => Ok(Type::Struct(s.into())),
-        }
-    }
 }
 
 impl Type {
