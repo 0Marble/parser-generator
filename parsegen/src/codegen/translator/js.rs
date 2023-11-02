@@ -155,7 +155,8 @@ function deep_copy_obj(a) {{
                 "print_char" => writeln!(self.buf, "function print_char(a) {{ console.log(a) }}")?,
                 "readline" => writeln!(self.buf, "function readline() {{ let res = INPUTS[INPUTS_READ]; INPUTS_READ++; return res; }}")?,
                 "str_to_int" => writeln!(self.buf, "function str_to_int(s) {{ return +s }}")?,
-                _ => (),
+                "strlen" => writeln!(self.buf, "function strlen(s) {{ return s.length }}")?,
+                _ => panic!("Unknown imported function {}", id.name), 
             },
             ByteCode::Func(name, args) => {
                 write!(self.buf, "function {}(", name.name)?;

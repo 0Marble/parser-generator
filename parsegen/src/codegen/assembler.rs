@@ -416,7 +416,11 @@ impl Assembler {
                 if let Ok(num) = usize::from_str(s) {
                     Val::Uint(num)
                 } else if s.starts_with('\'') && s.ends_with('\'') {
-                    Val::Char(s.chars().nth(1).unwrap())
+                    Val::Char(
+                        s.chars()
+                            .nth(1)
+                            .unwrap_or_else(|| panic!("invalid char at line {}", self.line)),
+                    )
                 } else {
                     panic!("Can not parse val: {} line {}", s, self.line);
                 }

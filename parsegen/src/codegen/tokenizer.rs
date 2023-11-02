@@ -1,5 +1,6 @@
 use std::{
     io::{Cursor, Write},
+    path::{Path, PathBuf},
     rc::Rc,
 };
 
@@ -16,18 +17,29 @@ use super::{
 pub trait TokenizerGenerator {
     fn init(&mut self, t: Rc<Tokenizer>);
     fn gen_tokenizer(&mut self);
+    fn write(&self) -> Vec<(PathBuf, String)>;
+    fn write_to_disk(&self, dir: &Path) -> std::io::Result<()> {
+        if !dir.exists() {
+            std::fs::create_dir(dir)?;
+        } else {
+            assert!(dir.is_dir());
+        }
+        for (path, contents) in self.write() {
+            std::fs::File::create(dir.join(path))?.write_all(contents.as_bytes())?;
+        }
+
+        Ok(())
+    }
 }
 
 pub struct BytecodeTokenizerGenerator {
-    tr: Box<dyn Translator>,
     t: Option<Rc<Tokenizer>>,
     buf: Vec<u8>,
 }
 
 impl BytecodeTokenizerGenerator {
-    pub fn new(tr: Box<dyn Translator>) -> Self {
+    pub fn new() -> Self {
         Self {
-            tr,
             t: None,
             buf: vec![],
         }
@@ -357,8 +369,6 @@ funcend
         
         // were able to consume char, continue eating
         if cp consumed
-        add word_end cp word_end 1
-        dotset t word_end cp word_end
 
         // if we were reading garbage before, return garbage
         // since we could consume this char, garbage has ended
@@ -366,10 +376,14 @@ funcend
         if cp cond
         call res new_token 3 1 cp word_start cp word_end
         dotset t garbage false
-        sub word_end cp word_end 1
         dotset t word_start cp word_end
+        add word_end cp word_end 1
+        dotset t word_end cp word_end
         ret mv res
         ifend
+
+        add word_end cp word_end 1
+        dotset t word_end cp word_end
 
         // were not reading garbage, no token produced
         call res new_token 3 0 0 0
@@ -434,8 +448,6 @@ impl TokenizerGenerator for BytecodeTokenizerGenerator {
     fn init(&mut self, t: Rc<Tokenizer>) {
         self.buf.clear();
         self.t = Some(t);
-
-        self.tr.init();
     }
 
     fn gen_tokenizer(&mut self) {
@@ -448,28 +460,12 @@ impl TokenizerGenerator for BytecodeTokenizerGenerator {
         }
         self.flush().unwrap();
         self.eat_char().unwrap();
-
-        let src = String::from_utf8(std::mem::take(&mut self.buf)).unwrap();
-        println!("{src}");
-        let mut a = Assembler::new();
-        for line in src.lines() {
-            a.parse_op(line);
-        }
-        let bc = a.finish();
-        for bc in bc {
-            self.tr.translate_op(bc);
-        }
-        self.tr.finalize();
     }
-}
 
-#[test]
-fn hello() {
-    let t = Tokenizer::new(vec![(
-        Token::new("Hello"),
-        Regex::Star(Box::new(Regex::Base('a'))),
-    )]);
-    let mut tg = BytecodeTokenizerGenerator::new(Box::new(Js::new()));
-    tg.init(Rc::new(t));
-    tg.gen_tokenizer();
+    fn write(&self) -> Vec<(PathBuf, String)> {
+        vec![(
+            "tokenizer.bc".into(),
+            String::from_utf8(self.buf.clone()).unwrap(),
+        )]
+    }
 }

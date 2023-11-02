@@ -1,4 +1,15 @@
-use super::{assembler::Assembler, bytecode::ByteCode};
+use std::{io::Write, rc::Rc};
+
+use crate::{
+    regex::regular_expression::Regex,
+    tokenizer::{Token, Tokenizer},
+};
+
+use super::{
+    assembler::Assembler,
+    bytecode::ByteCode,
+    tokenizer::{BytecodeTokenizerGenerator, TokenizerGenerator},
+};
 
 const PRELUDE: &'static str = "
 // prelude started
@@ -246,6 +257,163 @@ funcend
     )
 }
 
+const TOKENIZER: &'static str = "
+importfunc strlen uint 1 s ref string
+
+func print_tok void 2 tok Token s ref string
+create i uint
+create cond bool
+create n uint
+dotget i tok start
+dotget n tok end
+
+lt cond cp i cp n
+while cp cond
+create c char
+indexget c s cp i
+callvoid print_char 1 cp c
+
+add i cp i 1
+lt cond cp i cp n
+whileend
+
+funcend
+
+func main void 0
+create t Tokenizer
+call t new_tokenizer 0
+create tok Token
+create s string
+call s readline 0
+
+create kind uint
+create i uint
+create cond bool
+create n uint 
+assign i 0
+call n strlen 1 ref s
+
+lt cond cp i cp n
+while cp cond
+create c char
+indexget c s cp i
+call tok eat_char 2 ref t cp c
+
+dotget kind tok kind
+eq cond cp kind 0
+not cond cp cond
+if cp cond
+callvoid print_int 1 cp kind
+callvoid print_tok 2 cp tok ref s
+ifend
+
+add i cp i 1
+lt cond cp i cp n
+whileend
+
+call tok flush 1 ref t
+dotget kind tok kind
+eq cond cp kind 0
+not cond cp cond
+if cp cond
+callvoid print_int 1 cp kind
+callvoid print_tok 2 cp tok ref s
+ifend
+
+funcend
+
+";
+
+fn tokenizer_simple() -> (&'static str, String, Vec<(String, String)>) {
+    let t = Tokenizer::new(vec![(Token::new("Tok"), Regex::Base('a'))]);
+    let mut bcg = BytecodeTokenizerGenerator::new();
+    bcg.init(Rc::new(t));
+    bcg.gen_tokenizer();
+    let res = bcg.write();
+    let (_, src) = &res[0];
+
+    (
+        "tokenizer_simple",
+        PRELUDE.to_string() + src + TOKENIZER,
+        conv([
+            ("a", "2\na\n"),
+            ("aaa", "2\na\n2\na\n2\na\n"),
+            ("b", "1\nb\n"),
+            ("bbb", "1\nb\nb\nb\n"),
+            ("aba", "2\na\n1\nb\n2\na\n"),
+            ("ab", "2\na\n1\nb\n"),
+            ("ba", "1\nb\n2\na\n"),
+        ]),
+    )
+}
+
+fn tokenizer_idents() -> (&'static str, String, Vec<(String, String)>) {
+    let t = Tokenizer::new(vec![
+        (Token::new("Ident"), Regex::ident()),
+        (Token::new("Ws"), Regex::ascii_whitespace()),
+    ]);
+    let mut bcg = BytecodeTokenizerGenerator::new();
+    bcg.init(Rc::new(t));
+    bcg.gen_tokenizer();
+    let res = bcg.write();
+    let (_, src) = &res[0];
+
+    (
+        "tokenizer_idents",
+        PRELUDE.to_string() + src + TOKENIZER,
+        conv([("Foo", "2\nFoo\n"), ("Foo Bar", "2\nFoo\n3\n \n2\nBar\n")]),
+    )
+}
+
+fn tokenizer_common() -> (&'static str, String, Vec<(String, String)>) {
+    let t = Tokenizer::new(vec![
+        (
+            // 2
+            Token::new("If"),
+            Regex::Seq(vec![Regex::Base('i'), Regex::Base('f')]),
+        ),
+        (
+            // 3
+            Token::new("Let"),
+            Regex::Seq(vec![Regex::Base('l'), Regex::Base('e'), Regex::Base('t')]),
+        ),
+        (Token::new("Assign"), Regex::Base('=')), // 4
+        (
+            // 5
+            Token::new("Eq"),
+            Regex::Seq(vec![Regex::Base('='), Regex::Base('=')]),
+        ),
+        (Token::new("Lp"), Regex::Base('(')),          //6
+        (Token::new("Rp"), Regex::Base(')')),          //7
+        (Token::new("Lb"), Regex::Base('{')),          // 8
+        (Token::new("Rb"), Regex::Base('}')),          //9
+        (Token::new("Semi"), Regex::Base(';')),        //10
+        (Token::new("Number"), Regex::uint()),         //11
+        (Token::new("Ident"), Regex::ident()),         //12
+        (Token::new("Ws"), Regex::ascii_whitespace()), //13
+    ]);
+    let mut bcg = BytecodeTokenizerGenerator::new();
+    bcg.init(Rc::new(t));
+    bcg.gen_tokenizer();
+    let res = bcg.write();
+    let (_, src) = &res[0];
+
+    (
+    "tokenizer_common",
+        PRELUDE.to_string()+src+TOKENIZER,
+        conv([
+            ("let", "3\nlet\n"),
+            ("if", "2\nif\n"),
+            ("iffy", "12\niffy\n"),
+            ("123", "11\n123\n"),
+            ("x1", "12\nx1\n"),
+            ("x 1", "12\nx\n13\n \n11\n1\n"),
+        ("let x = 10; if x == 10 { print(x) }", "3\nlet\n13\n \n12\nx\n13\n \n4\n=\n13\n \n11\n10\n10\n;\n13\n \n2\nif\n13\n \n12\nx\n13\n \n5\n==\n13\n \n11\n10\n13\n \n8\n{\n13\n \n12\nprint\n6\n(\n12\nx\n7\n)\n13\n \n9\n}\n")
+
+        ])
+)
+}
+
 fn all_tests() -> impl Iterator<Item = (&'static str, String, Vec<(String, String)>)> {
     [
         basic_math,
@@ -254,6 +422,9 @@ fn all_tests() -> impl Iterator<Item = (&'static str, String, Vec<(String, Strin
         fizz_buzz,
         struct_and_method,
         field_ref,
+        tokenizer_simple,
+        tokenizer_idents,
+        tokenizer_common,
     ]
     .map(|f| {
         let (name, src, tests) = f();
@@ -267,6 +438,11 @@ fn assembler_success() {
     for (name, src, _) in all_tests() {
         let mut a = Assembler::new();
         println!("Assembling {}", name);
+        std::fs::File::create(format!("tests/{name}.bc"))
+            .unwrap()
+            .write_all(src.as_bytes())
+            .unwrap();
+
         for line in src.lines() {
             a.parse_op(line);
         }
