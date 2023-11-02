@@ -15,7 +15,7 @@ struct Func {
     args: Rc<[Ident]>,
 }
 
-pub struct BytecodeParser {
+pub struct Assembler {
     structs: Vec<Struct>,
     funcs: Vec<Func>,
     locals: Vec<Ident>,
@@ -24,7 +24,7 @@ pub struct BytecodeParser {
     cur_struct: Option<(Rc<str>, Vec<Ident>)>,
 }
 
-impl BytecodeParser {
+impl Assembler {
     pub fn new() -> Self {
         Self {
             structs: vec![],
@@ -34,10 +34,6 @@ impl BytecodeParser {
             line: 0,
             cur_struct: None,
         }
-    }
-
-    pub fn push_manually(&mut self, bc: ByteCode) {
-        self.res.push(bc);
     }
 
     pub fn parse_op(&mut self, s: &str) {
@@ -115,12 +111,23 @@ impl BytecodeParser {
                 let rhs = self.parse_val(split);
                 self.res.push(ByteCode::Assign(res, rhs));
             }
+            "deref" => {
+                let res = self.parse_ident(split);
+                let rhs = self.parse_ident(split);
+                self.res.push(ByteCode::Deref(res, rhs));
+            }
 
             "indexget" => {
                 let res = self.parse_ident(split);
                 let arr = self.parse_ident(split);
                 let idx = self.parse_val(split);
                 self.res.push(ByteCode::IndexGet(res, arr, idx));
+            }
+            "indexgetref" => {
+                let res = self.parse_ident(split);
+                let arr = self.parse_ident(split);
+                let idx = self.parse_val(split);
+                self.res.push(ByteCode::IndexGetRef(res, arr, idx));
             }
             "indexset" => {
                 let arr = self.parse_ident(split);
@@ -134,6 +141,12 @@ impl BytecodeParser {
                 let field = self.parse_field(split, &obj);
                 self.res.push(ByteCode::DotGet(res, obj, field));
             }
+            "dotgetref" => {
+                let res = self.parse_ident(split);
+                let obj = self.parse_ident(split);
+                let field = self.parse_field(split, &obj);
+                self.res.push(ByteCode::DotGetRef(res, obj, field));
+            }
             "dotset" => {
                 let obj = self.parse_ident(split);
                 let field = self.parse_field(split, &obj);
@@ -142,22 +155,59 @@ impl BytecodeParser {
             }
             "call" => {
                 let res = self.parse_ident(split);
-                let func = self.parse_ident(split);
+                let func_name = split
+                    .next()
+                    .unwrap_or_else(|| panic!("Expected func name on line {}", self.line));
+                let func = self
+                    .get_func(func_name)
+                    .unwrap_or_else(|| panic!("Unknown func {} on line {}", func_name, self.line));
+
                 let arg_cnt = self.parse_arc_count(split);
+                assert_eq!(
+                    arg_cnt,
+                    func.args.len(),
+                    "Invalid number of arguments for {} (got {} expected {}), on line {}",
+                    func_name,
+                    arg_cnt,
+                    func.args.len(),
+                    self.line
+                );
+
                 let mut args = vec![];
                 for _ in 0..arg_cnt {
                     args.push(self.parse_val(split));
                 }
-                self.res.push(ByteCode::Call(res, func, args.into()));
+                self.res.push(ByteCode::Call(
+                    res,
+                    (func.name, func.ret).into(),
+                    args.into(),
+                ));
             }
             "callvoid" => {
-                let func = self.parse_ident(split);
+                let func_name = split
+                    .next()
+                    .unwrap_or_else(|| panic!("Expected func name on line {}", self.line));
+                let func = self
+                    .get_func(func_name)
+                    .unwrap_or_else(|| panic!("Unknown func {} on line {}", func_name, self.line));
                 let arg_cnt = self.parse_arc_count(split);
+                assert_eq!(
+                    arg_cnt,
+                    func.args.len(),
+                    "Invalid number of arguments for {} (got {} expected {}), on line {}",
+                    func_name,
+                    arg_cnt,
+                    func.args.len(),
+                    self.line
+                );
                 let mut args = vec![];
                 for _ in 0..arg_cnt {
                     args.push(self.parse_val(split));
                 }
-                self.res.push(ByteCode::CallVoid(func, args.into()));
+                self.res.push(ByteCode::CallVoid(
+                    (func.name, func.ret).into(),
+                    args.into(),
+                ));
             }
 
             "while" => {
@@ -184,24 +234,39 @@ impl BytecodeParser {
             "default" => self.res.push(ByteCode::SwitchDefaultCase),
             "caseend" => self.res.push(ByteCode::SwitchCaseEnd),
 
-            "func" => {
-                let func = split
-                    .next()
-                    .unwrap_or_else(|| panic!("Expected func name on line {}", self.line));
-                let ret = self.parse_type(split);
-                let func: Ident = (func, ret).into();
+            "importfunc" => {
+                let func = self.parse_ident_type(split);
                 let arg_cnt = self.parse_arc_count(split);
                 let mut args = vec![];
                 for _ in 0..arg_cnt {
-                    let name = split
-                        .next()
-                        .unwrap_or_else(|| panic!("Expected arg name on line {}", self.line));
-                    let t = self.parse_type(split);
-                    let id: Ident = (name, t).into();
+                    let id = self.parse_ident_type(split);
+                    args.push(id);
+                }
+                let args: Rc<[_]> = args.into();
+                self.res
+                    .push(ByteCode::ImportFunc(func.clone(), args.clone()));
+                self.add_func(Func {
+                    name: func.name,
+                    ret: func.t,
+                    args,
+                });
+            }
+            "func" => {
+                let func = self.parse_ident_type(split);
+                let arg_cnt = self.parse_arc_count(split);
+                let mut args = vec![];
+                for _ in 0..arg_cnt {
+                    let id = self.parse_ident_type(split);
                     self.add_local(id.clone());
                     args.push(id);
                 }
-                self.res.push(ByteCode::Func(func, args.into()));
+                let args: Rc<[_]> = args.into();
+                self.res.push(ByteCode::Func(func.clone(), args.clone()));
+                self.add_func(Func {
+                    name: func.name,
+                    ret: func.t,
+                    args,
+                });
             }
             "ret" => {
                 let res = self.parse_val(split);
@@ -212,6 +277,18 @@ impl BytecodeParser {
                 self.res.push(ByteCode::FuncEnd)
             }
 
+            "importstruct" => {
+                let struct_name = split
+                    .next()
+                    .unwrap_or_else(|| panic!("No struct name given on line {}", self.line));
+                let cnt = self.parse_arc_count(split);
+                let mut fields = vec![];
+                for _ in 0..cnt {
+                    fields.push(self.parse_ident_type(split));
+                }
+                self.res
+                    .push(ByteCode::ImportStruct(struct_name.into(), fields.into()));
+            }
             "struct" => {
                 let struct_name = split
                     .next()
@@ -299,6 +376,13 @@ impl BytecodeParser {
         self.locals.push(l);
     }
 
+    fn parse_ident_type<'a>(&mut self, split: &mut impl Iterator<Item = &'a str>) -> Ident {
+        let name = split
+            .next()
+            .unwrap_or_else(|| panic!("Expected name on line {}", self.line));
+        let t = self.parse_type(split);
+        (name, t).into()
+    }
     fn parse_ident<'a>(&mut self, split: &mut impl Iterator<Item = &'a str>) -> Ident {
         let var_name = split
             .next()
@@ -307,12 +391,15 @@ impl BytecodeParser {
             .unwrap_or_else(|| panic!("Unknown ident: {} on line {}", var_name, self.line))
     }
     fn parse_val<'a>(&mut self, split: &mut impl Iterator<Item = &'a str>) -> Val {
-        match split.next().unwrap() {
+        match split
+            .next()
+            .unwrap_or_else(|| panic!("Expected val on line {}", self.line))
+        {
             "true" => Val::Bool(true),
             "false" => Val::Bool(false),
             "mv" => Val::Move(self.parse_ident(split)),
             "cp" => Val::Move(self.parse_ident(split)),
-            "rf" => Val::Move(self.parse_ident(split)),
+            "ref" => Val::Move(self.parse_ident(split)),
             s => {
                 if let Ok(num) = usize::from_str(s) {
                     Val::Uint(num)
@@ -332,7 +419,7 @@ impl BytecodeParser {
         let name = split
             .next()
             .unwrap_or_else(|| panic!("Expected field on line {}", self.line));
-        if let Type::Struct(s) = &s.t {
+        if let Type::Struct(s) = &s.t.deref() {
             self.get_struct(s.as_ref())
                 .unwrap_or_else(|| panic!("No such struct {} on line {}", s, self.line))
                 .fields
@@ -399,7 +486,7 @@ funcend
 
     #[test]
     fn compile() {
-        let mut p = BytecodeParser::new();
+        let mut p = Assembler::new();
         for s in math().lines() {
             p.parse_op(&s);
         }
