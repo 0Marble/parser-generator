@@ -1,0 +1,19 @@
+name: Parsegen
+
+on:
+  push:
+    bracnches:
+      - main
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+
+jobs:
+  run_tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v2
+      - uses: actions-rs/toolchain@v1
+      - uses: actions/setup-node@v4
+      - run: cargo test
