@@ -187,7 +187,7 @@ impl Display for Val {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Val::Bool(b) => write!(f, "{}", b),
-            Val::Char(c) => write!(f, "'{}'", c),
+            Val::Char(c) => write!(f, "'{}'", c.escape_default()),
             Val::Uint(x) => write!(f, "{}", x),
             Val::Copy(n) => match n.t {
                 Type::Void => unreachable!(),

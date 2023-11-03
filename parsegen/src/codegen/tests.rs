@@ -318,6 +318,7 @@ not cond cp cond
 if cp cond
 callvoid print_int 1 cp kind
 callvoid print_tok 2 cp tok ref s
+destroy s
 ifend
 
 funcend

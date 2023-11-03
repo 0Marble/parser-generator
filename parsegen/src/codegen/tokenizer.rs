@@ -174,12 +174,13 @@ switch cp c
                 write!(
                     self.buf,
                     "
-case '{l}'
+case '{}'
 dotset res state {to}
 dotset res status {status}
 ret mv res
 caseend
-"
+",
+                    l.escape_default()
                 )
                 .unwrap()
             }
