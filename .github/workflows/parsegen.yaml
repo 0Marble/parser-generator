@@ -18,4 +18,5 @@ jobs:
         with:
           toolchain: stable
       - uses: actions/setup-node@v4
+      - run: cd parsegen
       - run: cargo test
