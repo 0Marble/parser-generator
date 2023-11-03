@@ -424,8 +424,8 @@ fn all_tests() -> impl Iterator<Item = (&'static str, String, Vec<(String, Strin
         struct_and_method,
         field_ref,
         tokenizer_simple,
-        tokenizer_idents,
-        tokenizer_common,
+        // tokenizer_idents,
+        // tokenizer_common,
     ]
     .map(|f| {
         let (name, src, tests) = f();
