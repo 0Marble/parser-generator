@@ -6,4 +6,5 @@ pub trait Translator {
     fn finalize(&mut self);
 }
 
+pub mod c;
 pub mod js;
