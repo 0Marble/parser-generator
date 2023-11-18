@@ -213,11 +213,11 @@ impl Translator for Js {
         self.eat_bc(op).unwrap();
     }
 
-    fn finalize(&mut self) {
-        std::fs::File::create(format!("tests/dump.js"))
-            .unwrap()
-            .write_all(&self.buf)
-            .unwrap();
+    fn finalize(&mut self) -> Vec<(String, String)> {
+        vec![(
+            "".to_string(),
+            String::from_utf8(std::mem::take(&mut self.buf)).unwrap(),
+        )]
     }
 }
 
@@ -247,9 +247,7 @@ pub mod tests {
             for bc in bc {
                 js.translate_op(bc.clone());
             }
-            js.finalize();
-
-            self.src = String::from_utf8(js.buf).unwrap();
+            self.src = js.finalize().into_iter().next().unwrap().1;
         }
 
         fn run_test(&self, input: &str) -> String {
