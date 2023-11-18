@@ -1,6 +1,6 @@
 use std::{fmt::Display, str::FromStr};
 
-use crate::tokenizer::Token;
+use crate::{regex::state_machine::StateMachine, tokenizer::Token};
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Production {
@@ -56,8 +56,8 @@ impl Production {
     pub fn lhs(&self) -> Token {
         self.lhs.clone()
     }
-    pub fn rhs(&self) -> impl Iterator<Item = Token> + '_ {
-        self.rhs.iter().cloned()
+    pub fn rhs(&self) -> &[Token] {
+        &self.rhs
     }
 }
 
@@ -126,8 +126,8 @@ impl Grammar {
         let mut terminals = vec![];
         for prod in productions.iter() {
             for rhs_tok in prod.rhs() {
-                if productions.iter().all(|p| p.lhs() != rhs_tok) {
-                    terminals.push(rhs_tok);
+                if productions.iter().all(|p| &p.lhs() != rhs_tok) {
+                    terminals.push(rhs_tok.clone());
                 }
             }
         }
@@ -163,26 +163,24 @@ impl Grammar {
         self.start.clone()
     }
 
-    pub fn first(&self) -> impl Iterator<Item = (Token, Option<Token>)> + '_ {
-        let mut first = vec![];
+    pub fn first(&self) -> First {
+        let mut first: Vec<_> = self.terminals().map(|t| (t.clone(), Some(t))).collect();
         let mut stack: Vec<_> = self.productions().map(|p| p.lhs()).collect();
         stack.dedup();
 
         while let Some(nonterm) = stack.pop() {
-            println!("nonterm={nonterm}, first={first:?}");
             for prod in self.productions_for(nonterm.clone()) {
-                println!("\tprod={prod}");
-                if let Some(a) = prod.rhs().next() {
+                if let Some(a) = prod.rhs().first() {
                     if self.is_terminal(a.clone()) {
-                        first.push((nonterm.clone(), Some(a)));
+                        first.push((nonterm.clone(), Some(a.clone())));
                     } else {
-                        let precomputed = first.iter().filter(|(t, _)| t == &a).cloned();
+                        let precomputed = first.iter().filter(|(t, _)| t == a).cloned();
                         let mut had_precomputed = false;
                         let mut new = vec![];
 
                         for (_, t) in precomputed {
                             had_precomputed = true;
-                            new.push((nonterm.clone(), t));
+                            new.push((nonterm.clone(), t.clone()));
                         }
                         first.append(&mut new);
                         if !had_precomputed {
@@ -196,7 +194,112 @@ impl Grammar {
             }
         }
 
-        first.into_iter()
+        First::new(first)
+    }
+
+    pub fn follow(&self, first: &First) -> Follow {
+        let mut map = vec![(self.start(), vec![])];
+        let mut changed = true;
+        while changed {
+            changed = false;
+
+            for prod in self.productions() {
+                for i in 0..prod.rhs().len() {
+                    let b = prod.rhs()[i].clone();
+
+                    let b_follow_idx = if let Some((i, (_, _))) =
+                        map.iter().enumerate().find(|(_, (x, _))| x == &b)
+                    {
+                        i
+                    } else {
+                        map.push((b.clone(), vec![]));
+                        map.len() - 1
+                    };
+                    let mut b_follow = std::mem::take(&mut map[b_follow_idx].1);
+
+                    let beta = prod.rhs().get(i + 1);
+                    // beta might be a terminal, in that case FIRST(beta) = beta
+                    // if B is the last symbol in production, FOLLOW(B) contains everything from
+                    // FOLLOW(A), or if FOLLOW(beta[0]) contains eps.
+                    let beta_first = match beta {
+                        None => &[None],
+                        Some(beta) => first.first(beta.clone()).unwrap(),
+                    };
+                    for t in beta_first {
+                        if let Some(t) = t {
+                            if b_follow.contains(t) {
+                                continue;
+                            }
+
+                            b_follow.push(t.clone());
+                            changed = true;
+                        } else {
+                            // everything from A
+                            if prod.lhs() == b {
+                                continue;
+                            }
+
+                            for t in map
+                                .iter()
+                                .find(|(t, _)| t == &prod.lhs())
+                                .map(|(_, t)| t)
+                                .unwrap()
+                            {
+                                if b_follow.contains(t) {
+                                    continue;
+                                }
+                                b_follow.push(t.clone());
+                                changed = true;
+                            }
+                        }
+                    }
+
+                    assert!(std::mem::replace(&mut map[b_follow_idx].1, b_follow).is_empty());
+                }
+            }
+        }
+
+        Follow { map }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Follow {
+    map: Vec<(Token, Vec<Token>)>,
+}
+
+impl Follow {
+    pub fn follow(&self, nonterm: Token) -> Option<&[Token]> {
+        self.map
+            .iter()
+            .find(|(t, _)| t == &nonterm)
+            .map(|(_, follow)| follow.as_slice())
+    }
+}
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct First {
+    first: Vec<(Token, Vec<Option<Token>>)>,
+}
+
+impl First {
+    fn new(it: impl IntoIterator<Item = (Token, Option<Token>)>) -> Self {
+        let mut f: Vec<(Token, Vec<Option<Token>>)> = vec![];
+        for (nt, t) in it {
+            if let Some((_, a)) = f.iter_mut().find(|(t, _)| *t == nt) {
+                a.push(t);
+            } else {
+                f.push((nt, vec![t]));
+            }
+        }
+
+        Self { first: f }
+    }
+
+    pub fn first(&self, nonterm: Token) -> Option<&[Option<Token>]> {
+        self.first
+            .iter()
+            .find(|(t, _)| t == &nonterm)
+            .map(|(_, a)| a.as_ref())
     }
 }
 
@@ -257,49 +360,81 @@ mod tests {
     #[test]
     fn first() {
         let g = Grammar::from_str(expr_grammar()).unwrap();
-        let mut first: HashMap<_, HashSet<_>> = HashMap::new();
-        for (nt, t) in g.first() {
-            first.entry(nt).or_default().insert(t);
-        }
+        let first = g.first();
 
         let c = HashSet::from([Some(Token::new("id")), Some(Token::new("lp"))]);
         let actual_first = HashMap::from([
             (Token::new("E"), c.clone()),
             (Token::new("T"), c.clone()),
             (Token::new("F"), c.clone()),
+            (Token::new("id"), HashSet::from([Some(Token::new("id"))])),
+            (Token::new("lp"), HashSet::from([Some(Token::new("lp"))])),
+            (Token::new("rp"), HashSet::from([Some(Token::new("rp"))])),
         ]);
-        assert_eq!(first, actual_first);
-
-        let g = Grammar::from_str(expr_grammar_ll()).unwrap();
-        println!("{g}");
-        let mut first: HashMap<_, HashSet<_>> = HashMap::new();
-        for (nt, t) in g.first() {
-            first.entry(nt).or_default().insert(t);
+        for (nt, a) in actual_first {
+            assert_eq!(
+                HashSet::from_iter(first.first(nt).unwrap().iter().cloned()),
+                a
+            );
         }
 
+        let g = Grammar::from_str(expr_grammar_ll()).unwrap();
+        let first = g.first();
+
         let actual_first = HashMap::from([
-            (
-                Token::new("E"),
-                HashSet::from([Some(Token::new("lp")), Some(Token::new("id"))]),
-            ),
-            (
-                Token::new("Ea"),
-                HashSet::from([Some(Token::new("add")), None]),
-            ),
-            (
-                Token::new("T"),
-                HashSet::from([Some(Token::new("lp")), Some(Token::new("id"))]),
-            ),
-            (
-                Token::new("Ta"),
-                HashSet::from([Some(Token::new("mul")), None]),
-            ),
-            (
-                Token::new("F"),
-                HashSet::from([Some(Token::new("lp")), Some(Token::new("id"))]),
-            ),
+            ("E", HashSet::from([Some("lp"), Some("id")])),
+            ("Ea", HashSet::from([Some("add"), None])),
+            ("T", HashSet::from([Some("lp"), Some("id")])),
+            ("Ta", HashSet::from([Some("mul"), None])),
+            ("F", HashSet::from([Some("lp"), Some("id")])),
+            ("id", HashSet::from([Some("id")])),
+            ("lp", HashSet::from([Some("lp")])),
+            ("rp", HashSet::from([Some("rp")])),
         ]);
 
-        assert_eq!(first, actual_first);
+        for (nt, f) in actual_first {
+            assert_eq!(
+                HashSet::<Option<Token>>::from_iter(
+                    first.first(Token::new(nt)).unwrap().iter().cloned()
+                ),
+                HashSet::from_iter(f.iter().map(|t| t.as_ref().map(Token::new)))
+            );
+        }
+    }
+
+    #[test]
+    fn follow() {
+        let g = Grammar::from_str(expr_grammar()).unwrap();
+        let first = g.first();
+        let follow = g.follow(&first);
+        let actual_follow = HashMap::from([
+            ("E", vec!["rp"]),
+            ("T", vec!["rp", "add"]),
+            ("F", vec!["rp", "add", "mul"]),
+        ]);
+        for (nt, f) in actual_follow {
+            assert_eq!(
+                HashSet::<Token>::from_iter(follow.follow(Token::new(nt)).unwrap().iter().cloned()),
+                HashSet::from_iter(f.iter().map(Token::new))
+            );
+        }
+
+        let g = Grammar::from_str(expr_grammar_ll()).unwrap();
+        let actual_follow = HashMap::from([
+            ("E", vec!["rp"]),
+            ("Ea", vec!["rp"]),
+            ("T", vec!["rp", "add"]),
+            ("Ta", vec!["rp", "add"]),
+            ("F", vec!["rp", "mul", "add"]),
+        ]);
+
+        let first = g.first();
+        let follow = g.follow(&first);
+        for (nt, f) in actual_follow {
+            assert_eq!(
+                HashSet::<Token>::from_iter(follow.follow(Token::new(nt)).unwrap().iter().cloned()),
+                HashSet::from_iter(f.iter().map(Token::new))
+            );
+        }
     }
 }
