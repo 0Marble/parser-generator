@@ -28,7 +28,6 @@ impl Codegen for BytecodeCodegen {
         for bc in bc {
             self.translator.translate_op(bc);
         }
-        self.translator.finalize();
-        todo!()
+        self.translator.finalize()
     }
 }
