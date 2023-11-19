@@ -1,3 +1,5 @@
+use std::{fmt::Display, io::Cursor, io::Write};
+
 use crate::{regex::state_machine::StateMachine, tokenizer::Token};
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Hash)]
@@ -116,5 +118,74 @@ impl Lgraph {
 
     pub fn start_nodes(&self) -> impl Iterator<Item = usize> + '_ {
         self.0.start_nodes()
+    }
+}
+
+impl Display for Lgraph {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        writeln!(f, "digraph {{\n  node [shape=circle];\n  Q1 [style=invisible, height=0, width=0, fixedsize=true];")?;
+
+        writeln!(f, "  Q1 -> \"{}\";", self.start_nodes().next().unwrap())?;
+
+        for (a, l, b) in self.edges() {
+            write!(f, "{a} -> {b}")?;
+            let mut label: Vec<u8> = vec![];
+            let mut w1 = Cursor::new(&mut label);
+            let w1 = &mut w1;
+            let mut attribs: Vec<u8> = vec![];
+            let mut w2 = Cursor::new(&mut attribs);
+            let w2 = &mut w2;
+            if let Some(tok) = l.tok() {
+                write!(w2, "token=\"{}\"", tok.name()).unwrap();
+                write!(w1, "{}\\n", tok.name()).unwrap();
+            }
+            if let Some(bracket) = l.bracket() {
+                write!(
+                    w2,
+                    "bracket_idx={}, bracket_open={}",
+                    bracket.index(),
+                    bracket.is_open()
+                )
+                .unwrap();
+                if bracket.is_open() {
+                    write!(w1, "({}\\n", bracket.index()).unwrap();
+                } else {
+                    write!(w1, "){}\\n", bracket.index()).unwrap();
+                }
+            }
+
+            write!(w2, "look_ahead=\"[").unwrap();
+            write!(w1, "[").unwrap();
+            let look_ahead_len = l.look_ahead().count();
+            for (i, tok) in l.look_ahead().enumerate() {
+                if let Some(tok) = tok {
+                    write!(w2, "{tok}").unwrap();
+                    write!(w1, "{tok}").unwrap();
+                } else {
+                    write!(w2, "$").unwrap();
+                    write!(w1, "$").unwrap();
+                }
+                if i + 1 < look_ahead_len {
+                    write!(w2, ",").unwrap();
+                    write!(w1, ",").unwrap();
+                }
+            }
+            write!(w2, "]\"").unwrap();
+            write!(w1, "]").unwrap();
+
+            writeln!(
+                f,
+                " [label=\"{}\", {}];",
+                String::from_utf8(label).unwrap(),
+                String::from_utf8(attribs).unwrap()
+            )?;
+        }
+        for node in self.end_nodes() {
+            writeln!(f, "  \"{}\" [shape=doublecircle];", node).unwrap();
+        }
+
+        writeln!(f, "}}").unwrap();
+
+        Ok(())
     }
 }
