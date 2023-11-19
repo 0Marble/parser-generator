@@ -59,6 +59,9 @@ impl Stack {
     pub fn new() -> Self {
         Default::default()
     }
+    pub fn top(&self) -> Option<usize> {
+        self.stack.last().cloned()
+    }
 
     pub fn try_accept(mut self, b: Bracket) -> (Self, bool) {
         if b.is_open() {
