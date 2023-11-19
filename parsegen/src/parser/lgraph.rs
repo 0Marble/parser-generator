@@ -23,14 +23,14 @@ impl Bracket {
 #[derive(Debug, Default, Clone, PartialEq, Eq, Hash)]
 pub struct Item {
     tok: Option<Token>,
-    look_ahead: Vec<Option<Token>>,
+    look_ahead: Option<Vec<Option<Token>>>,
     bracket: Option<Bracket>,
 }
 
 impl Item {
     pub fn new(
         tok: Option<Token>,
-        look_ahead: Vec<Option<Token>>,
+        look_ahead: Option<Vec<Option<Token>>>,
         bracket: Option<Bracket>,
     ) -> Self {
         Self {
@@ -39,14 +39,15 @@ impl Item {
             bracket,
         }
     }
+
     pub fn tok(&self) -> Option<Token> {
         self.tok.clone()
     }
     pub fn bracket(&self) -> Option<Bracket> {
         self.bracket.clone()
     }
-    pub fn look_ahead(&self) -> impl Iterator<Item = Option<Token>> + '_ {
-        self.look_ahead.iter().cloned()
+    pub fn look_ahead(&self) -> Option<&[Option<Token>]> {
+        self.look_ahead.as_ref().map(|t| t.as_slice())
     }
 }
 
@@ -139,13 +140,13 @@ impl Display for Lgraph {
             let mut w2 = Cursor::new(&mut attribs);
             let w2 = &mut w2;
             if let Some(tok) = l.tok() {
-                write!(w2, "token=\"{}\"", tok.name()).unwrap();
+                write!(w2, "token=\"{}\", ", tok.name()).unwrap();
                 write!(w1, "{}\\n", tok.name()).unwrap();
             }
             if let Some(bracket) = l.bracket() {
                 write!(
                     w2,
-                    "bracket_idx={}, bracket_open={}",
+                    "bracket_idx={}, bracket_open={}, ",
                     bracket.index(),
                     bracket.is_open()
                 )
@@ -157,25 +158,26 @@ impl Display for Lgraph {
                 }
             }
 
-            write!(w2, "look_ahead=\"[").unwrap();
-            write!(w1, "[").unwrap();
-            let look_ahead_len = l.look_ahead().count();
-            for (i, tok) in l.look_ahead().enumerate() {
-                if let Some(tok) = tok {
-                    write!(w2, "{tok}").unwrap();
-                    write!(w1, "{tok}").unwrap();
-                } else {
-                    write!(w2, "$").unwrap();
-                    write!(w1, "$").unwrap();
+            if let Some(look_ahead) = l.look_ahead() {
+                write!(w2, "look_ahead=\"[").unwrap();
+                write!(w1, "[").unwrap();
+                let look_ahead_len = look_ahead.iter().count();
+                for (i, tok) in look_ahead.iter().enumerate() {
+                    if let Some(tok) = tok {
+                        write!(w2, "{tok}").unwrap();
+                        write!(w1, "{tok}").unwrap();
+                    } else {
+                        write!(w2, "$").unwrap();
+                        write!(w1, "$").unwrap();
+                    }
+                    if i + 1 < look_ahead_len {
+                        write!(w2, ",").unwrap();
+                        write!(w1, ",").unwrap();
+                    }
                 }
-                if i + 1 < look_ahead_len {
-                    write!(w2, ",").unwrap();
-                    write!(w1, ",").unwrap();
-                }
+                write!(w2, "]\"").unwrap();
+                write!(w1, "]").unwrap();
             }
-            write!(w2, "]\"").unwrap();
-            write!(w1, "]").unwrap();
-
             writeln!(
                 f,
                 " [label=\"{}\", {}];",

@@ -3,4 +3,4 @@ pub mod lgraph;
 pub mod ll1;
 
 #[cfg(test)]
-mod tests;
+pub mod tests;

@@ -3,7 +3,7 @@ use crate::parser::lgraph::{Bracket, Item};
 use super::{grammar::Grammar, lgraph::Lgraph};
 
 impl Lgraph {
-    pub fn ll1(grammar: Grammar) -> Self {
+    pub fn ll1(grammar: &Grammar) -> Self {
         let first = grammar.first();
         let follow = grammar.follow(&first);
         for nt in grammar.non_terminals() {
@@ -64,10 +64,10 @@ impl Lgraph {
         // step 1: create starting and ending nodes for productions
         // and calculate look-aheads.
         for (i, prod) in grammar.productions().enumerate() {
-            let a_first = first.first(prod.lhs()).unwrap();
             let mut look_ahead = vec![];
             let mut had_eps = false;
-            for t in a_first {
+            let first_alpha = first.first_of_sent(prod.rhs()).unwrap();
+            for t in first_alpha {
                 if t.is_some() {
                     look_ahead.push(t.clone());
                 } else {
@@ -75,24 +75,23 @@ impl Lgraph {
                 }
             }
             if had_eps {
-                let a_follow = follow.follow(prod.lhs()).unwrap();
-                for t in a_follow {
+                for t in follow.follow(prod.lhs()).unwrap() {
                     if look_ahead.contains(t) {
                         continue;
                     }
                     look_ahead.push(t.clone());
                 }
             }
-            look_aheads.push(look_ahead);
+            look_aheads.push(look_ahead.clone());
 
             ll1 = ll1.add_edge(
                 4 * i,
-                Item::new(None, vec![], Some(Bracket::new(i, true))),
+                Item::new(None, Some(look_ahead.clone()), Some(Bracket::new(i, true))),
                 4 * i + 1,
             );
             ll1 = ll1.add_edge(
                 4 * i + 2,
-                Item::new(None, vec![], Some(Bracket::new(i, false))),
+                Item::new(None, None, Some(Bracket::new(i, false))),
                 4 * i + 3,
             );
             node_count += 4;
@@ -100,6 +99,14 @@ impl Lgraph {
 
         // step 2: fill out the productions, connecting them when needed
         for (prod_idx, prod) in grammar.productions().enumerate() {
+            if prod.rhs().is_empty() {
+                ll1 = ll1.add_edge(
+                    4 * prod_idx + 1,
+                    Item::new(None, None, None),
+                    4 * prod_idx + 2,
+                );
+                continue;
+            }
             let mut source = 4 * prod_idx + 1;
 
             for (i, t) in prod.rhs().iter().enumerate() {
@@ -110,9 +117,8 @@ impl Lgraph {
                     node_count - 1
                 };
                 if grammar.is_terminal(t.clone()) {
-                    let item = Item::new(Some(t.clone()), vec![], None);
+                    let item = Item::new(Some(t.clone()), None, None);
                     ll1 = ll1.add_edge(source, item, target);
-                    source = target;
                 } else {
                     for (prod2_idx, prod2) in grammar.productions().enumerate() {
                         if &prod2.lhs() != t {
@@ -121,17 +127,17 @@ impl Lgraph {
 
                         let a_item = Item::new(
                             None,
-                            look_aheads[prod2_idx].clone(),
+                            Some(look_aheads[prod2_idx].clone()),
                             Some(Bracket::new(bracket_count, true)), // we will return to target
                         );
                         let b_item =
-                            Item::new(None, vec![], Some(Bracket::new(bracket_count, false)));
+                            Item::new(None, None, Some(Bracket::new(bracket_count, false)));
                         ll1 = ll1.add_edge(source, a_item, 4 * prod2_idx);
                         ll1 = ll1.add_edge(4 * prod2_idx + 3, b_item, target);
-                        source = target;
                         bracket_count += 1;
                     }
                 }
+                source = target;
             }
         }
 
@@ -145,8 +151,8 @@ impl Lgraph {
             if prod.lhs() != start_symbol {
                 continue;
             }
-            let start_item = Item::new(None, look_aheads[i].clone(), None);
-            let end_item = Item::new(None, vec![None], None);
+            let start_item = Item::new(None, Some(look_aheads[i].clone()), None);
+            let end_item = Item::new(None, Some(vec![None]), None);
             ll1 = ll1.add_edge(start_node, start_item, 4 * i);
             ll1 = ll1.add_edge(4 * i + 3, end_item, end_node);
         }

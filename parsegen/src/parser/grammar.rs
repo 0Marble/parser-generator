@@ -217,17 +217,14 @@ impl Grammar {
                     };
                     let mut b_follow = std::mem::take(&mut map[b_follow_idx].1);
 
-                    let beta = prod.rhs().get(i + 1);
+                    let beta = &prod.rhs()[i + 1..];
                     // beta might be a terminal, in that case FIRST(beta) = beta
                     // if B is the last symbol in production, FOLLOW(B) contains everything from
                     // FOLLOW(A), or if FOLLOW(beta[0]) contains eps.
-                    let beta_first = match beta {
-                        None => &[None],
-                        Some(beta) => first.first(beta.clone()).unwrap(),
-                    };
+                    let beta_first = first.first_of_sent(beta).unwrap();
                     for t in beta_first {
                         if t.is_some() {
-                            if b_follow.contains(t) {
+                            if b_follow.contains(&t) {
                                 continue;
                             }
 
@@ -300,6 +297,23 @@ impl First {
             .iter()
             .find(|(t, _)| t == &nonterm)
             .map(|(_, a)| a.as_ref())
+    }
+    pub fn first_of_sent(&self, sent: &[Token]) -> Option<Vec<Option<Token>>> {
+        let mut f = vec![];
+        for t in sent {
+            let first_of_t = self.first(t.clone())?;
+            for t in first_of_t {
+                if !f.contains(t) && t.is_some() {
+                    f.push(t.clone());
+                }
+            }
+            if !first_of_t.contains(&None) {
+                return Some(f);
+            }
+        }
+        f.push(None);
+
+        Some(f)
     }
 }
 
