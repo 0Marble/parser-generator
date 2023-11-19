@@ -49,8 +49,8 @@ impl Lgraph {
         // for prod[i] section should look like
         // (4*i) -(i-> (4*i+1) -production-> (4*i+2) -)i-> (4*i+3)
         // and connections to it should be:
-        // ... -(j, look_ahead[i]-> (4*i) -.....->(4*i+3) -)j -> j....
-        // where j is some node
+        // ... -(b, look_ahead[i]-> (4*i) -.....->(4*i+3) -)b -> j....
+        // where j is some node, and b is a uinique bracket
         // all productions of the start symbol should be connected to
         // the start node, for example:
         // -> P -look_ahead[i]-> (4*i) -....->(4*i+3) -look_ahead=None-> Q
@@ -58,6 +58,7 @@ impl Lgraph {
         // start symbol
 
         let mut node_count = 0;
+        let mut bracket_count = grammar.non_terminals().count();
         let mut look_aheads = vec![];
 
         // step 1: create starting and ending nodes for productions
@@ -121,12 +122,14 @@ impl Lgraph {
                         let a_item = Item::new(
                             None,
                             look_aheads[prod2_idx].clone(),
-                            Some(Bracket::new(target, true)), // we will return to target
+                            Some(Bracket::new(bracket_count, true)), // we will return to target
                         );
-                        let b_item = Item::new(None, vec![], Some(Bracket::new(target, false)));
+                        let b_item =
+                            Item::new(None, vec![], Some(Bracket::new(bracket_count, false)));
                         ll1 = ll1.add_edge(source, a_item, 4 * prod2_idx);
                         ll1 = ll1.add_edge(4 * prod2_idx + 3, b_item, target);
                         source = target;
+                        bracket_count += 1;
                     }
                 }
             }
