@@ -1,6 +1,6 @@
 use std::{fmt::Display, str::FromStr};
 
-use crate::{regex::state_machine::StateMachine, tokenizer::Token};
+use crate::tokenizer::Token;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Production {
@@ -198,7 +198,7 @@ impl Grammar {
     }
 
     pub fn follow(&self, first: &First) -> Follow {
-        let mut map = vec![(self.start(), vec![])];
+        let mut map = vec![(self.start(), vec![None])];
         let mut changed = true;
         while changed {
             changed = false;
@@ -226,7 +226,7 @@ impl Grammar {
                         Some(beta) => first.first(beta.clone()).unwrap(),
                     };
                     for t in beta_first {
-                        if let Some(t) = t {
+                        if t.is_some() {
                             if b_follow.contains(t) {
                                 continue;
                             }
@@ -265,11 +265,11 @@ impl Grammar {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Follow {
-    map: Vec<(Token, Vec<Token>)>,
+    map: Vec<(Token, Vec<Option<Token>>)>,
 }
 
 impl Follow {
-    pub fn follow(&self, nonterm: Token) -> Option<&[Token]> {
+    pub fn follow(&self, nonterm: Token) -> Option<&[Option<Token>]> {
         self.map
             .iter()
             .find(|(t, _)| t == &nonterm)
@@ -310,16 +310,17 @@ mod tests {
     use super::*;
 
     fn expr_grammar() -> &'static str {
-        "E -> T add E; E -> T; T -> F mul T; T -> F; F -> id; F -> lp E rp;"
+        "S -> E; E -> T add E; E -> T; T -> F mul T; T -> F; F -> id; F -> lp E rp;"
     }
     fn expr_grammar_ll() -> &'static str {
-        "E -> T Ea; Ea -> add T Ea; Ea -> ; T -> F Ta; Ta -> mul F Ta; Ta -> ; F -> lp E rp; F -> id;"
+        "S -> E; E -> T Ea; Ea -> add T Ea; Ea -> ; T -> F Ta; Ta -> mul F Ta; Ta -> ; F -> lp E rp; F -> id;"
     }
 
     #[test]
     fn from_string() {
         let g = Grammar::new(
             [
+                ("S", vec!["E"]),
                 ("E", vec!["T", "add", "E"]),
                 ("E", vec!["T"]),
                 ("T", vec!["F", "mul", "T"]),
@@ -327,7 +328,7 @@ mod tests {
                 ("F", vec!["id"]),
                 ("F", vec!["lp", "E", "rp"]),
             ],
-            Token::new("E"),
+            Token::new("S"),
         );
         assert_eq!(Ok(g), Grammar::from_str(expr_grammar()));
     }
@@ -335,7 +336,8 @@ mod tests {
     #[test]
     fn basic() {
         let g = Grammar::from_str(expr_grammar()).unwrap();
-        assert_eq!(g.start().name(), "E");
+        assert_eq!(g.start().name(), "S");
+        assert_eq!(g.productions_for(Token::new("S")).count(), 1);
         assert_eq!(g.productions_for(Token::new("E")).count(), 2);
         assert_eq!(g.productions_for(Token::new("T")).count(), 2);
         assert_eq!(g.productions_for(Token::new("F")).count(), 2);
@@ -349,7 +351,8 @@ mod tests {
         assert!(!g.is_terminal(Token::new("F")));
 
         let g = Grammar::from_str(expr_grammar_ll()).unwrap();
-        assert_eq!(g.start().name(), "E");
+        assert_eq!(g.start().name(), "S");
+        assert_eq!(g.productions_for(Token::new("S")).count(), 1);
         assert_eq!(g.productions_for(Token::new("E")).count(), 1);
         assert_eq!(g.productions_for(Token::new("Ea")).count(), 2);
         assert_eq!(g.productions_for(Token::new("T")).count(), 1);
@@ -364,6 +367,7 @@ mod tests {
 
         let c = HashSet::from([Some(Token::new("id")), Some(Token::new("lp"))]);
         let actual_first = HashMap::from([
+            (Token::new("S"), c.clone()),
             (Token::new("E"), c.clone()),
             (Token::new("T"), c.clone()),
             (Token::new("F"), c.clone()),
@@ -408,33 +412,47 @@ mod tests {
         let first = g.first();
         let follow = g.follow(&first);
         let actual_follow = HashMap::from([
-            ("E", vec!["rp"]),
-            ("T", vec!["rp", "add"]),
-            ("F", vec!["rp", "add", "mul"]),
+            ("S", vec![None]),
+            ("T", vec![Some("add"), Some("rp"), None]),
+            ("F", vec![Some("mul"), Some("add"), Some("rp"), None]),
+            ("E", vec![None, Some("rp")]),
         ]);
         for (nt, f) in actual_follow {
-            assert_eq!(
-                HashSet::<Token>::from_iter(follow.follow(Token::new(nt)).unwrap().iter().cloned()),
-                HashSet::from_iter(f.iter().map(Token::new))
-            );
+            let tok = Token::new(nt);
+            let mut f0 = HashSet::new();
+            for t in follow.follow(tok).unwrap().iter().cloned() {
+                f0.insert(t);
+            }
+            let mut f1 = HashSet::new();
+            for t in f.iter().map(|t| t.map(Token::new)) {
+                f1.insert(t);
+            }
+            assert_eq!(f0, f1);
         }
 
         let g = Grammar::from_str(expr_grammar_ll()).unwrap();
-        let actual_follow = HashMap::from([
-            ("E", vec!["rp"]),
-            ("Ea", vec!["rp"]),
-            ("T", vec!["rp", "add"]),
-            ("Ta", vec!["rp", "add"]),
-            ("F", vec!["rp", "mul", "add"]),
-        ]);
-
         let first = g.first();
         let follow = g.follow(&first);
+        let actual_follow = HashMap::from([
+            ("S", vec![None]),
+            ("Ea", vec![None, Some("rp")]),
+            ("T", vec![Some("add"), Some("rp"), None]),
+            ("Ta", vec![Some("add"), Some("rp"), None]),
+            ("F", vec![Some("mul"), Some("add"), Some("rp"), None]),
+            ("E", vec![None, Some("rp")]),
+        ]);
+
         for (nt, f) in actual_follow {
-            assert_eq!(
-                HashSet::<Token>::from_iter(follow.follow(Token::new(nt)).unwrap().iter().cloned()),
-                HashSet::from_iter(f.iter().map(Token::new))
-            );
+            let tok = Token::new(nt);
+            let mut f0 = HashSet::new();
+            for t in follow.follow(tok).unwrap().iter().cloned() {
+                f0.insert(t);
+            }
+            let mut f1 = HashSet::new();
+            for t in f.iter().map(|t| t.map(Token::new)) {
+                f1.insert(t);
+            }
+            assert_eq!(f0, f1);
         }
     }
 }

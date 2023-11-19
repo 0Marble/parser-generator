@@ -21,12 +21,16 @@ impl Bracket {
 #[derive(Debug, Default, Clone, PartialEq, Eq, Hash)]
 pub struct Item {
     tok: Option<Token>,
-    look_ahead: Vec<Token>,
+    look_ahead: Vec<Option<Token>>,
     bracket: Option<Bracket>,
 }
 
 impl Item {
-    pub fn new(tok: Option<Token>, look_ahead: Vec<Token>, bracket: Option<Bracket>) -> Self {
+    pub fn new(
+        tok: Option<Token>,
+        look_ahead: Vec<Option<Token>>,
+        bracket: Option<Bracket>,
+    ) -> Self {
         Self {
             tok,
             look_ahead,
@@ -39,7 +43,7 @@ impl Item {
     pub fn bracket(&self) -> Option<Bracket> {
         self.bracket.clone()
     }
-    pub fn look_ahead(&self) -> impl Iterator<Item = Token> + '_ {
+    pub fn look_ahead(&self) -> impl Iterator<Item = Option<Token>> + '_ {
         self.look_ahead.iter().cloned()
     }
 }
@@ -70,6 +74,7 @@ impl Stack {
     }
 }
 
+#[derive(Debug, Default, Clone, PartialEq)]
 pub struct Lgraph(StateMachine<Item>);
 
 impl Lgraph {

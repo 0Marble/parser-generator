@@ -1,6 +1,6 @@
 use std::{any::type_name, collections::HashSet, fmt::Display, io::Cursor, io::Write};
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Default, Clone, PartialEq)]
 pub struct StateMachine<T> {
     edges: Vec<(usize, T, usize)>,
     start: Vec<usize>,
