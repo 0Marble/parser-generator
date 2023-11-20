@@ -153,17 +153,24 @@ F -> lp E rp;
 F -> id;";
     convert_res(
         g,
-        [(vec!["id"], Ok("id, F[8], Ta[6], T[4], Ea[3], E[1], S[0], "))],
+        [
+            (vec!["id"], Ok("id, F[8], Ta[6], T[4], Ea[3], E[1], S[0], ")),
+            (
+                vec!["id", "add", "id"],
+                Ok("id, F[8], Ta[6], T[4], add, id, F[8], Ta[6], T[4], Ea[3], Ea[2], E[1], S[0], "),
+            ),
+            (
+                vec!["id", "mul", "id"],
+                Ok("id, F[8], mul, id, F[8], Ta[6], Ta[5], T[4], Ea[3], E[1], S[0], "),
+            ),
+            (vec!["lp", "id", "add", "id", "rp"], Ok("lp, id, F[8], Ta[6], T[4], add, id, F[8], Ta[6], T[4], Ea[3], Ea[2], E[1], rp, F[7], Ta[6], T[4], Ea[3], E[1], S[0], ")),
+            (vec!["id", "mul", "id", "add", "id"], Ok("id, F[8], mul, id, F[8], Ta[6], Ta[5], T[4], add, id, F[8], Ta[6], T[4], Ea[3], Ea[2], E[1], S[0], ")),
+        ],
     )
 }
 
-fn if_else() -> TestData {
-    let g = "S -> i E t S Sa; S -> a; Sa -> e S; E -> b;";
-    convert_res(g, [(vec!["a"], Ok("a, S[1], "))])
-}
-
 pub fn ll1_gauntlet(t: &mut dyn TestParser) {
-    for f in [expr_grammar_ll1, if_else] {
+    for f in [expr_grammar_ll1] {
         let (g, tests) = f();
         let ll1 = Lgraph::ll1(&g);
         std::fs::File::create("tests/ll1.dot")

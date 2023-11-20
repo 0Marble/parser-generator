@@ -91,7 +91,11 @@ impl Lgraph {
             );
             ll1 = ll1.add_edge(
                 4 * i + 2,
-                Item::new(None, None, Some(Bracket::new(i, false))),
+                Item::new(
+                    None,
+                    Some(follow.follow(prod.lhs()).unwrap().to_vec()),
+                    Some(Bracket::new(i, false)),
+                ),
                 4 * i + 3,
             );
             node_count += 4;
@@ -130,6 +134,7 @@ impl Lgraph {
                             Some(look_aheads[prod2_idx].clone()),
                             Some(Bracket::new(bracket_count, true)), // we will return to target
                         );
+
                         let b_item =
                             Item::new(None, None, Some(Bracket::new(bracket_count, false)));
                         ll1 = ll1.add_edge(source, a_item, 4 * prod2_idx);

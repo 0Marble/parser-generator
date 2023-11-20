@@ -1,4 +1,4 @@
-use std::{fmt::Display, str::FromStr};
+use std::{collections::LinkedList, fmt::Display, str::FromStr};
 
 use crate::tokenizer::Token;
 
@@ -258,6 +258,37 @@ impl Grammar {
 
         Follow { map }
     }
+
+    pub fn possible_words(&self) -> PossibleWords<'_> {
+        PossibleWords::new(self)
+    }
+}
+
+pub struct PossibleWords<'a> {
+    grammar: &'a Grammar,
+    cur_depth: usize,
+    i: usize,
+}
+
+impl<'a> PossibleWords<'a> {
+    pub fn new(grammar: &'a Grammar) -> Self {
+        Self {
+            grammar,
+            cur_depth: 0,
+            i: 0,
+        }
+    }
+}
+
+fn words_of_len(g: &Grammar, len: usize) -> Vec<(Vec<Token>, String)> {
+    let mut res = vec![];
+    let mut stack = vec![LinkedList::from([g.start()])];
+
+    while let Some(sent) = stack.pop() {
+        //
+    }
+
+    res
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
