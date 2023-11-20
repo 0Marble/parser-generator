@@ -334,6 +334,7 @@ impl<'a> Iterator for PossibleWords<'a> {
                             }
                             self.next_stack.push(left);
                         }
+                        break;
                     }
                 }
 
@@ -350,18 +351,13 @@ impl<'a> Iterator for PossibleWords<'a> {
                             toks.push(tok.clone());
                             write!(w, "{tok}, ").unwrap();
                         }
-                        Node::RuleStart(prod_idx) => write!(
-                            w,
-                            "{}Start[{prod_idx}], ",
-                            self.grammar.productions().nth(prod_idx).unwrap().lhs()
-                        )
-                        .unwrap(),
                         Node::RuleEnd(prod_idx) => write!(
                             w,
-                            "{}End[{prod_idx}], ",
+                            "{}[{prod_idx}], ",
                             self.grammar.productions().nth(prod_idx).unwrap().lhs()
                         )
                         .unwrap(),
+                        _ => (),
                     }
                 }
 

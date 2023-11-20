@@ -135,8 +135,29 @@ impl Lgraph {
                             Some(Bracket::new(bracket_count, true)), // we will return to target
                         );
 
-                        let b_item =
-                            Item::new(None, None, Some(Bracket::new(bracket_count, false)));
+                        let first_beta = first.first_of_sent(&prod.rhs()[i + 1..]).unwrap();
+                        let mut following = vec![];
+                        let mut had_eps = false;
+                        for t in first_beta {
+                            if t.is_some() {
+                                following.push(t);
+                            } else {
+                                had_eps = true;
+                            }
+                        }
+                        if had_eps {
+                            let a_follow = follow.follow(prod.lhs()).unwrap();
+                            for t in a_follow {
+                                if !following.contains(t) {
+                                    following.push(t.clone());
+                                }
+                            }
+                        }
+                        let b_item = Item::new(
+                            None,
+                            Some(following),
+                            Some(Bracket::new(bracket_count, false)),
+                        );
                         ll1 = ll1.add_edge(source, a_item, 4 * prod2_idx);
                         ll1 = ll1.add_edge(4 * prod2_idx + 3, b_item, target);
                         bracket_count += 1;
@@ -156,8 +177,16 @@ impl Lgraph {
             if prod.lhs() != start_symbol {
                 continue;
             }
-            let start_item = Item::new(None, Some(look_aheads[i].clone()), None);
-            let end_item = Item::new(None, Some(vec![None]), None);
+            let start_item = Item::new(
+                None,
+                Some(look_aheads[i].clone()),
+                Some(Bracket::new(bracket_count, true)),
+            );
+            let end_item = Item::new(
+                None,
+                Some(vec![None]),
+                Some(Bracket::new(bracket_count, false)),
+            );
             ll1 = ll1.add_edge(start_node, start_item, 4 * i);
             ll1 = ll1.add_edge(4 * i + 3, end_item, end_node);
         }

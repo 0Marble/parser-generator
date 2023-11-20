@@ -33,7 +33,7 @@ impl TestParser for RuntimeParser {
         self.g = Some(g);
         self.grammar = Some(grammar);
     }
-    fn parse(&self, toks: &[String]) -> Result<String, TraverseError> {
+    fn parse(&self, toks: &[Token]) -> Result<String, TraverseError> {
         let mut res = vec![];
         let mut w = Cursor::new(&mut res);
         let w = &mut w;
@@ -43,8 +43,8 @@ impl TestParser for RuntimeParser {
         let mut state = g.start_nodes().next().unwrap();
         let mut stack = Stack::new();
         for i in 0..=toks.len() {
-            let tok = toks.get(i).map(Token::new);
-            let next_tok = toks.get(i + 1).map(Token::new);
+            let tok = toks.get(i).cloned();
+            let next_tok = toks.get(i + 1).cloned();
             let mut consumed = false;
 
             while !consumed && !(tok == None && g.is_end_node(state) && stack.top().is_none()) {
@@ -119,28 +119,14 @@ impl TestParser for RuntimeParser {
 
 pub trait TestParser {
     fn init(&mut self, g: Lgraph, grammar: Grammar);
-    fn parse(&self, toks: &[String]) -> Result<String, TraverseError>;
+    fn parse(&self, toks: &[Token]) -> Result<String, TraverseError>;
 }
 
-fn convert_res<S: ToString, T: ToString, R: ToString>(
-    g: S,
-    it: impl IntoIterator<Item = (impl IntoIterator<Item = T>, Result<R, TraverseError>)>,
-) -> (Grammar, Vec<(Vec<String>, Result<String, TraverseError>)>) {
-    (
-        Grammar::from_str(&g.to_string()).unwrap(),
-        it.into_iter()
-            .map(|(toks, res)| {
-                (
-                    toks.into_iter().map(|s| s.to_string()).collect(),
-                    res.map(|s| s.to_string()),
-                )
-            })
-            .collect(),
-    )
+fn parens_grammar_ll1() -> Grammar {
+    Grammar::from_str("S -> a S b S; S -> ;").unwrap()
 }
 
-type TestData = (Grammar, Vec<(Vec<String>, Result<String, TraverseError>)>);
-fn expr_grammar_ll1() -> TestData {
+fn expr_grammar_ll1() -> Grammar {
     let g = "
 S -> E;
 E -> T Ea;
@@ -151,36 +137,27 @@ Ta -> mul F Ta;
 Ta -> ;
 F -> lp E rp;
 F -> id;";
-    convert_res(
-        g,
-        [
-            (vec!["id"], Ok("id, F[8], Ta[6], T[4], Ea[3], E[1], S[0], ")),
-            (
-                vec!["id", "add", "id"],
-                Ok("id, F[8], Ta[6], T[4], add, id, F[8], Ta[6], T[4], Ea[3], Ea[2], E[1], S[0], "),
-            ),
-            (
-                vec!["id", "mul", "id"],
-                Ok("id, F[8], mul, id, F[8], Ta[6], Ta[5], T[4], Ea[3], E[1], S[0], "),
-            ),
-            (vec!["lp", "id", "add", "id", "rp"], Ok("lp, id, F[8], Ta[6], T[4], add, id, F[8], Ta[6], T[4], Ea[3], Ea[2], E[1], rp, F[7], Ta[6], T[4], Ea[3], E[1], S[0], ")),
-            (vec!["id", "mul", "id", "add", "id"], Ok("id, F[8], mul, id, F[8], Ta[6], Ta[5], T[4], add, id, F[8], Ta[6], T[4], Ea[3], Ea[2], E[1], S[0], ")),
-        ],
-    )
+    Grammar::from_str(g).unwrap()
 }
 
 pub fn ll1_gauntlet(t: &mut dyn TestParser) {
-    for f in [expr_grammar_ll1] {
-        let (g, tests) = f();
-        let ll1 = Lgraph::ll1(&g);
+    for grammar in [expr_grammar_ll1(), parens_grammar_ll1()] {
+        let g = Lgraph::ll1(&grammar);
         std::fs::File::create("tests/ll1.dot")
             .unwrap()
-            .write_all(ll1.to_string().as_bytes())
+            .write_all(g.to_string().as_bytes())
             .unwrap();
-
-        t.init(ll1, g);
-        for (input, output) in tests {
-            assert_eq!(t.parse(&input), output)
+        t.init(g, grammar.clone());
+        for (toks, tree) in grammar.possible_words().take(100) {
+            assert_eq!(
+                t.parse(&toks),
+                Ok(tree),
+                "failed on \n\tgrammar={grammar}\n\tinput={}\n",
+                toks.iter().fold(String::new(), |mut acc, tok| {
+                    acc += tok.name();
+                    acc
+                })
+            );
         }
     }
 }
