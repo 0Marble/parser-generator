@@ -259,24 +259,33 @@ impl Grammar {
         Follow { map }
     }
 
-    pub fn possible_words(&self, max_len: usize) -> PossibleWords<'_> {
-        PossibleWords::new(self, max_len)
+    pub fn possible_words(&self) -> PossibleWords<'_> {
+        PossibleWords::new(self)
     }
 }
 
 pub struct PossibleWords<'a> {
     grammar: &'a Grammar,
-    len: usize,
+    depth: usize,
+    max_depth: Option<usize>,
     stack: Vec<LinkedList<Node>>,
+    next_stack: Vec<LinkedList<Node>>,
 }
 
 impl<'a> PossibleWords<'a> {
-    pub fn new(grammar: &'a Grammar, max_len: usize) -> Self {
+    fn new(grammar: &'a Grammar) -> Self {
         Self {
             grammar,
-            len: max_len,
-            stack: vec![LinkedList::from([Node::Leaf(grammar.start())])],
+            depth: 0,
+            max_depth: None,
+            next_stack: vec![LinkedList::from([Node::Leaf(grammar.start())])],
+            stack: vec![],
         }
+    }
+
+    pub fn with_derivation_count(mut self, derivation_count: usize) -> Self {
+        self.max_depth = Some(derivation_count);
+        self
     }
 }
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -290,71 +299,75 @@ impl<'a> Iterator for PossibleWords<'a> {
     type Item = (Vec<Token>, String);
 
     fn next(&mut self) -> Option<Self::Item> {
-        'OUTER: while let Some(tree) = self.stack.pop() {
-            let mut had_nonterms = false;
-            let mut term_count = 0;
-            for (i, node) in tree.iter().enumerate() {
-                if let Node::Leaf(leaf) = node {
-                    if self.grammar.is_terminal(leaf.clone()) {
-                        term_count += 1;
-                        if term_count > self.len {
-                            continue 'OUTER;
-                        }
-                        continue;
-                    }
+        loop {
+            if self.stack.is_empty() {
+                if self.max_depth.map_or(false, |d| d <= self.depth) {
+                    return None;
+                }
+                self.depth += 1;
+                std::mem::swap(&mut self.stack, &mut self.next_stack);
+            }
 
-                    had_nonterms = true;
-                    for (prod_idx, prod) in self.grammar.productions().into_iter().enumerate() {
-                        if &prod.lhs() != leaf {
+            while let Some(tree) = self.stack.pop() {
+                let mut had_nonterms = false;
+                for (i, node) in tree.iter().enumerate() {
+                    if let Node::Leaf(leaf) = node {
+                        if self.grammar.is_terminal(leaf.clone()) {
                             continue;
                         }
-                        let mut left = tree.clone();
-                        let mut right = left.split_off(i);
-                        assert_eq!(right.pop_front(), Some(Node::Leaf(leaf.clone())));
-                        left.push_back(Node::RuleStart(prod_idx));
-                        right.push_front(Node::RuleEnd(prod_idx));
-                        for t in prod.rhs() {
-                            left.push_back(Node::Leaf(t.clone()));
+
+                        had_nonterms = true;
+                        for (prod_idx, prod) in self.grammar.productions().into_iter().enumerate() {
+                            if &prod.lhs() != leaf {
+                                continue;
+                            }
+                            let mut left = tree.clone();
+                            let mut right = left.split_off(i);
+                            assert_eq!(right.pop_front(), Some(Node::Leaf(leaf.clone())));
+                            left.push_back(Node::RuleStart(prod_idx));
+                            for t in prod.rhs() {
+                                left.push_back(Node::Leaf(t.clone()));
+                            }
+                            left.push_back(Node::RuleEnd(prod_idx));
+                            for n in right {
+                                left.push_back(n);
+                            }
+                            self.next_stack.push(left);
                         }
-                        for n in right {
-                            left.push_back(n);
-                        }
-                        self.stack.push(left);
                     }
                 }
-            }
 
-            if had_nonterms {
-                continue;
-            }
-            let mut toks = vec![];
-            let mut derivation: Vec<u8> = vec![];
-            let mut w = Cursor::new(&mut derivation);
-            let w = &mut w;
-            for node in tree {
-                match node {
-                    Node::Leaf(tok) => {
-                        toks.push(tok.clone());
-                        write!(w, "{tok}, ").unwrap();
-                    }
-                    Node::RuleStart(prod_idx) => write!(
-                        w,
-                        "{}Start[{prod_idx}], ",
-                        self.grammar.productions().nth(prod_idx).unwrap().lhs()
-                    )
-                    .unwrap(),
-                    Node::RuleEnd(prod_idx) => write!(
-                        w,
-                        "{}End[{prod_idx}], ",
-                        self.grammar.productions().nth(prod_idx).unwrap().lhs()
-                    )
-                    .unwrap(),
+                if had_nonterms {
+                    continue;
                 }
-            }
+                let mut toks = vec![];
+                let mut derivation: Vec<u8> = vec![];
+                let mut w = Cursor::new(&mut derivation);
+                let w = &mut w;
+                for node in tree {
+                    match node {
+                        Node::Leaf(tok) => {
+                            toks.push(tok.clone());
+                            write!(w, "{tok}, ").unwrap();
+                        }
+                        Node::RuleStart(prod_idx) => write!(
+                            w,
+                            "{}Start[{prod_idx}], ",
+                            self.grammar.productions().nth(prod_idx).unwrap().lhs()
+                        )
+                        .unwrap(),
+                        Node::RuleEnd(prod_idx) => write!(
+                            w,
+                            "{}End[{prod_idx}], ",
+                            self.grammar.productions().nth(prod_idx).unwrap().lhs()
+                        )
+                        .unwrap(),
+                    }
+                }
 
-            return Some((toks, String::from_utf8(derivation).unwrap()));
+                return Some((toks, String::from_utf8(derivation).unwrap()));
+            }
         }
-        None
     }
 }
 
