@@ -1,4 +1,4 @@
-use std::{collections::LinkedList, fmt::Display, str::FromStr};
+use std::{collections::LinkedList, fmt::Display, io::Cursor, io::Write, str::FromStr};
 
 use crate::tokenizer::Token;
 
@@ -259,36 +259,103 @@ impl Grammar {
         Follow { map }
     }
 
-    pub fn possible_words(&self) -> PossibleWords<'_> {
-        PossibleWords::new(self)
+    pub fn possible_words(&self, max_len: usize) -> PossibleWords<'_> {
+        PossibleWords::new(self, max_len)
     }
 }
 
 pub struct PossibleWords<'a> {
     grammar: &'a Grammar,
-    cur_depth: usize,
-    i: usize,
+    len: usize,
+    stack: Vec<LinkedList<Node>>,
 }
 
 impl<'a> PossibleWords<'a> {
-    pub fn new(grammar: &'a Grammar) -> Self {
+    pub fn new(grammar: &'a Grammar, max_len: usize) -> Self {
         Self {
             grammar,
-            cur_depth: 0,
-            i: 0,
+            len: max_len,
+            stack: vec![LinkedList::from([Node::Leaf(grammar.start())])],
         }
     }
 }
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum Node {
+    Leaf(Token),
+    RuleStart(usize),
+    RuleEnd(usize),
+}
 
-fn words_of_len(g: &Grammar, len: usize) -> Vec<(Vec<Token>, String)> {
-    let mut res = vec![];
-    let mut stack = vec![LinkedList::from([g.start()])];
+impl<'a> Iterator for PossibleWords<'a> {
+    type Item = (Vec<Token>, String);
 
-    while let Some(sent) = stack.pop() {
-        //
+    fn next(&mut self) -> Option<Self::Item> {
+        'OUTER: while let Some(tree) = self.stack.pop() {
+            let mut had_nonterms = false;
+            let mut term_count = 0;
+            for (i, node) in tree.iter().enumerate() {
+                if let Node::Leaf(leaf) = node {
+                    if self.grammar.is_terminal(leaf.clone()) {
+                        term_count += 1;
+                        if term_count > self.len {
+                            continue 'OUTER;
+                        }
+                        continue;
+                    }
+
+                    had_nonterms = true;
+                    for (prod_idx, prod) in self.grammar.productions().into_iter().enumerate() {
+                        if &prod.lhs() != leaf {
+                            continue;
+                        }
+                        let mut left = tree.clone();
+                        let mut right = left.split_off(i);
+                        assert_eq!(right.pop_front(), Some(Node::Leaf(leaf.clone())));
+                        left.push_back(Node::RuleStart(prod_idx));
+                        right.push_front(Node::RuleEnd(prod_idx));
+                        for t in prod.rhs() {
+                            left.push_back(Node::Leaf(t.clone()));
+                        }
+                        for n in right {
+                            left.push_back(n);
+                        }
+                        self.stack.push(left);
+                    }
+                }
+            }
+
+            if had_nonterms {
+                continue;
+            }
+            let mut toks = vec![];
+            let mut derivation: Vec<u8> = vec![];
+            let mut w = Cursor::new(&mut derivation);
+            let w = &mut w;
+            for node in tree {
+                match node {
+                    Node::Leaf(tok) => {
+                        toks.push(tok.clone());
+                        write!(w, "{tok}, ").unwrap();
+                    }
+                    Node::RuleStart(prod_idx) => write!(
+                        w,
+                        "{}Start[{prod_idx}], ",
+                        self.grammar.productions().nth(prod_idx).unwrap().lhs()
+                    )
+                    .unwrap(),
+                    Node::RuleEnd(prod_idx) => write!(
+                        w,
+                        "{}End[{prod_idx}], ",
+                        self.grammar.productions().nth(prod_idx).unwrap().lhs()
+                    )
+                    .unwrap(),
+                }
+            }
+
+            return Some((toks, String::from_utf8(derivation).unwrap()));
+        }
+        None
     }
-
-    res
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
