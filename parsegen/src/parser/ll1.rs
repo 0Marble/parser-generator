@@ -1,6 +1,5 @@
-use crate::parser::lgraph::{Bracket, Item};
-
 use super::{grammar::Grammar, lgraph::Lgraph};
+use crate::parser::lgraph::{Bracket, Item};
 
 impl Lgraph {
     pub fn ll1(grammar: &Grammar) -> Self {
@@ -86,14 +85,16 @@ impl Lgraph {
 
             ll1 = ll1.add_edge(
                 4 * i,
-                Item::new(None, Some(look_ahead.clone()), Some(Bracket::new(i, true))),
+                // Item::new(None, Some(look_ahead.clone()), Some(Bracket::new(i, true))),
+                Item::new(None, None, Some(Bracket::new(i, true))),
                 4 * i + 1,
             );
             ll1 = ll1.add_edge(
                 4 * i + 2,
                 Item::new(
                     None,
-                    Some(follow.follow(prod.lhs()).unwrap().to_vec()),
+                    // Some(follow.follow(prod.lhs()).unwrap().to_vec()),
+                    None,
                     Some(Bracket::new(i, false)),
                 ),
                 4 * i + 3,

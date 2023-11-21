@@ -301,7 +301,7 @@ impl<'a> Iterator for PossibleWords<'a> {
     fn next(&mut self) -> Option<Self::Item> {
         loop {
             if self.stack.is_empty() {
-                if self.max_depth.map_or(false, |d| d <= self.depth) {
+                if self.max_depth.map_or(false, |d| d <= self.depth) || self.next_stack.is_empty() {
                     return None;
                 }
                 self.depth += 1;

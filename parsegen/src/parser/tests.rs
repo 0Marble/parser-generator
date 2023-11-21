@@ -122,8 +122,16 @@ pub trait TestParser {
     fn parse(&self, toks: &[Token]) -> Result<String, TraverseError>;
 }
 
-fn parens_grammar_ll1() -> Grammar {
+fn parens_grammar_simple() -> Grammar {
     Grammar::from_str("S -> a S b S; S -> ;").unwrap()
+}
+
+fn empty_language() -> Grammar {
+    Grammar::from_str("S -> ;").unwrap()
+}
+
+fn finite_language() -> Grammar {
+    Grammar::from_str("S -> a b c; S -> d E f; E -> ; E -> e;").unwrap()
 }
 
 fn expr_grammar_ll1() -> Grammar {
@@ -140,23 +148,60 @@ F -> id;";
     Grammar::from_str(g).unwrap()
 }
 
+fn simple_plang_ll1() -> Grammar {
+    let s = "
+S -> FUNCTIONS;
+FUNCTIONS -> FUNCTION FUNCTIONS;
+FUNCTIONS -> ;
+FUNCTION -> SIGNATURE BLOCK;
+SIGNATURE -> ident lp LIST rp;
+BLOCK -> lb STATEMENTS rb;
+LIST -> FULLLIST;
+LIST -> ;
+FULLLIST -> ident coma LIST;
+STATEMENTS -> DO;
+STATEMENTS -> LET;
+STATEMENTS -> IF;
+STATEMENTS -> WHILE;
+STATEMENTS -> RETURN;
+DO -> do ASSIGNABLE eq EXPR;
+ASSIGNABLE -> ident;
+ASSIGNABLE -> ls EXPR rs ident;
+LET -> let ident eq EXPR;
+IF -> if EXPR BLOCK;
+WHILE -> while EXPR BLOCK;
+RETURN -> return EXPR;
+EXPR -> ident;
+EXPR -> call ident lp EXPRLIST rp;
+EXPRLIST -> FULLEXPRLIST;
+EXPRLIST -> ;
+FULLEXPRLIST -> EXPR coma EXPRLIST;";
+    Grammar::from_str(s).unwrap()
+}
 pub fn ll1_gauntlet(t: &mut dyn TestParser) {
-    for grammar in [expr_grammar_ll1(), parens_grammar_ll1()] {
+    for grammar in [
+        empty_language(),
+        finite_language(),
+        expr_grammar_ll1(),
+        parens_grammar_simple(),
+        simple_plang_ll1(),
+    ] {
         let g = Lgraph::ll1(&grammar);
         std::fs::File::create("tests/ll1.dot")
             .unwrap()
             .write_all(g.to_string().as_bytes())
             .unwrap();
         t.init(g, grammar.clone());
-        for (toks, tree) in grammar.possible_words().take(100) {
+        for (toks, tree) in grammar.possible_words().take(500) {
+            let s = toks.iter().fold(String::new(), |mut acc, tok| {
+                acc += tok.name();
+                acc += " ";
+                acc
+            });
             assert_eq!(
                 t.parse(&toks),
                 Ok(tree),
-                "failed on \n\tgrammar={grammar}\n\tinput={}\n",
-                toks.iter().fold(String::new(), |mut acc, tok| {
-                    acc += tok.name();
-                    acc
-                })
+                "failed on \n\tgrammar={grammar}\n\tinput={s}\n",
             );
         }
     }
