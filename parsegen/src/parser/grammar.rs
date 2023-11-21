@@ -25,7 +25,7 @@ impl FromStr for Production {
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         let s = s.trim();
-        let mut split = s.split_ascii_whitespace();
+        let mut split = s.split_whitespace();
         let lhs = Token::new(split.next().ok_or_else(|| ProductionFromStrError::NoHead)?);
         let _ = split
             .next()
@@ -93,12 +93,27 @@ impl FromStr for Grammar {
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         let mut prods = vec![];
-        for prod in s.split(';') {
-            if prod.is_empty() {
+        for prod_variants in s.split(';') {
+            if prod_variants.is_empty() {
                 continue;
             }
-            let prod = Production::from_str(prod)?;
-            prods.push(prod);
+            let mut prod_variants = prod_variants.split('|');
+
+            let first_prod = if let Some(p) = prod_variants.next() {
+                Production::from_str(p)?
+            } else {
+                continue;
+            };
+            let start = first_prod.lhs();
+            prods.push(first_prod);
+
+            for p in prod_variants {
+                let mut toks = vec![];
+                for t in p.split_whitespace() {
+                    toks.push(Token::new(t));
+                }
+                prods.push(Production::new(start.clone(), toks));
+            }
         }
         if prods.is_empty() {
             return Err(GrammarFromStrError::NoProductions);
@@ -431,10 +446,10 @@ mod tests {
     use super::*;
 
     fn expr_grammar() -> &'static str {
-        "S -> E; E -> T add E; E -> T; T -> F mul T; T -> F; F -> id; F -> lp E rp;"
+        "S -> E; E -> T add E | T; T -> F mul T | F; F -> id | lp E rp;"
     }
     fn expr_grammar_ll() -> &'static str {
-        "S -> E; E -> T Ea; Ea -> add T Ea; Ea -> ; T -> F Ta; Ta -> mul F Ta; Ta -> ; F -> lp E rp; F -> id;"
+        "S -> E; E -> T Ea; Ea -> add T Ea | ; T -> F Ta; Ta -> mul F Ta | ; F -> lp E rp | id;"
     }
 
     #[test]
