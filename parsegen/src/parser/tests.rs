@@ -134,6 +134,10 @@ fn finite_language() -> Grammar {
     Grammar::from_str("S -> a b c; S -> d E f; E -> ; E -> e;").unwrap()
 }
 
+fn non_slr_bu_ll1() -> Grammar {
+    Grammar::from_str("S -> A a A b | B b B a; A -> ; B -> ;").unwrap()
+}
+
 fn expr_grammar_ll1() -> Grammar {
     let g = "
 S -> E;
@@ -178,6 +182,21 @@ EXPRLIST -> ;
 FULLEXPRLIST -> EXPR coma EXPRLIST;";
     Grammar::from_str(s).unwrap()
 }
+
+fn json_grammar() -> Grammar {
+    Grammar::from_str(
+        "
+VALUE -> OBJ | ARRAY | num | string;
+OBJ -> lb KEYVALS rb;
+ARRAY -> ls VALS rs;
+KEYVALS -> KEYVAL coma KEYVALS | ;
+KEYVAL -> q ident q semi VALUE;
+VALS -> VALUE coma VALS | ;
+",
+    )
+    .unwrap()
+}
+
 pub fn ll1_gauntlet(t: &mut dyn TestParser) {
     for grammar in [
         empty_language(),
@@ -185,6 +204,8 @@ pub fn ll1_gauntlet(t: &mut dyn TestParser) {
         expr_grammar_ll1(),
         parens_grammar_simple(),
         simple_plang_ll1(),
+        non_slr_bu_ll1(),
+        json_grammar(),
     ] {
         let g = Lgraph::ll1(&grammar);
         std::fs::File::create("tests/ll1.dot")
@@ -207,7 +228,76 @@ pub fn ll1_gauntlet(t: &mut dyn TestParser) {
     }
 }
 
+fn parens_grammar_slr() -> Grammar {
+    Grammar::from_str("S -> S a S b; S -> ;").unwrap()
+}
+
+fn expr_grammar() -> Grammar {
+    Grammar::from_str("S -> E; E -> T add E; E -> T; T -> F mul T; T -> F; F -> id; F -> lp E rp;")
+        .unwrap()
+}
+
+fn stack_expr() -> Grammar {
+    Grammar::from_str("S -> S S add; S -> S S mul; S -> id;").unwrap()
+}
+
+fn regex_grammar() -> Grammar {
+    Grammar::from_str(
+        "
+R -> V or R | V;
+V -> E V | E;
+E -> B | S | P | M;
+S -> B star;
+P -> B plus;
+M -> B question;
+B -> symbol | bs star | bs plus | bs bs | bs question | bs or | bs lp | bs rp | lp R rp;",
+    )
+    .unwrap()
+}
+
+fn an_bm_c() -> Grammar {
+    Grammar::from_str("S -> a S; S -> T c; T -> a T b; T -> ;").unwrap()
+}
+
+pub fn slr_gauntlet(t: &mut dyn TestParser) {
+    for grammar in [
+        empty_language(),
+        finite_language(),
+        expr_grammar_ll1(),
+        parens_grammar_simple(),
+        simple_plang_ll1(),
+        an_bm_c(),
+        parens_grammar_slr(),
+        regex_grammar(),
+        stack_expr(),
+        expr_grammar(),
+        json_grammar(),
+    ] {
+        let g = Lgraph::slr(&grammar);
+        std::fs::File::create("tests/slr.dot")
+            .unwrap()
+            .write_all(g.to_string().as_bytes())
+            .unwrap();
+        t.init(g, grammar.clone());
+        for (toks, tree) in grammar.possible_words().take(500) {
+            let s = toks.iter().fold(String::new(), |mut acc, tok| {
+                acc += tok.name();
+                acc += " ";
+                acc
+            });
+            assert_eq!(
+                t.parse(&toks),
+                Ok(tree),
+                "failed on \n\tgrammar={grammar}\n\tinput={s}\n",
+            );
+        }
+    }
+}
+
 #[test]
 fn runtime_parser() {
-    ll1_gauntlet(&mut RuntimeParser::default())
+    println!("testing ll1");
+    ll1_gauntlet(&mut RuntimeParser::default());
+    println!("testing slr");
+    slr_gauntlet(&mut RuntimeParser::default());
 }

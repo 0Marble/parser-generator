@@ -13,24 +13,20 @@ impl Lgraph {
             //    and wise-wersa
             for (i, alpha_prod) in grammar.productions_for(nt.clone()).enumerate() {
                 for beta_prod in grammar.productions_for(nt.clone()).skip(i + 1) {
-                    let alpha_first = match alpha_prod.rhs().first() {
-                        None => &[None],
-                        Some(t) => first.first(t.clone()).unwrap(),
-                    };
-                    let beta_first = match beta_prod.rhs().first() {
-                        None => &[None],
-                        Some(t) => first.first(t.clone()).unwrap(),
-                    };
+                    let alpha_first = first.first_of_sent(alpha_prod.rhs()).unwrap();
+                    let beta_first = first.first_of_sent(beta_prod.rhs()).unwrap();
 
                     assert!(
-                        alpha_first.iter().all(|a| !beta_first.contains(a)),
+                        alpha_first
+                            .iter()
+                            .all(|a| !beta_first.contains(a) || a.is_none()),
                         "Grammar not LL1: FIRST set conflict on {alpha_prod} and {beta_prod}"
                     );
 
                     let a_follow = follow.follow(nt.clone()).unwrap();
                     if alpha_first.contains(&None) {
                         assert!(
-                        beta_first.iter().all(|a| !a_follow.contains(a)),
+                        beta_first.iter().all(|a| !a_follow.contains(a)) && !beta_first.contains(&None),
                         "Grammar not LL1: FIRST and FOLLOW conflict on {alpha_prod} and {beta_prod}"
                     );
                     } else if beta_first.contains(&None) {

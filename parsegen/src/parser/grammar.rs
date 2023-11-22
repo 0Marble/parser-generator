@@ -94,7 +94,7 @@ impl FromStr for Grammar {
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         let mut prods = vec![];
         for prod_variants in s.split(';') {
-            if prod_variants.is_empty() {
+            if prod_variants.trim().is_empty() {
                 continue;
             }
             let mut prod_variants = prod_variants.split('|');
