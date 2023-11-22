@@ -2,21 +2,30 @@ use std::{fmt::Display, io::Cursor, io::Write};
 
 use crate::{regex::state_machine::StateMachine, tokenizer::Token};
 
-#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct Bracket {
-    index: usize,
-    is_open: bool,
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Bracket {
+    Open(usize),
+    Closed(usize),
+    Wildcard,
 }
 
 impl Bracket {
     pub fn new(index: usize, is_open: bool) -> Self {
-        Self { index, is_open }
-    }
-    pub fn index(&self) -> usize {
-        self.index
+        if is_open {
+            Self::Open(index)
+        } else {
+            Self::Closed(index)
+        }
     }
     pub fn is_open(&self) -> bool {
-        self.is_open
+        matches!(self, Self::Open(_))
+    }
+    pub fn index(&self) -> Option<usize> {
+        match self {
+            Bracket::Open(i) => Some(*i),
+            Bracket::Closed(i) => Some(*i),
+            Bracket::Wildcard => None,
+        }
     }
 }
 
@@ -66,16 +75,42 @@ impl Stack {
 
     pub fn try_accept(mut self, b: Bracket) -> (Self, bool) {
         if b.is_open() {
-            self.stack.push(b.index);
+            self.stack.push(b.index().unwrap());
             return (self, true);
         } else if let Some(top) = self.stack.last() {
-            if *top != b.index {
+            if b.index().map_or(false, |i| i != *top) {
                 return (self, false);
             }
             self.stack.pop();
             return (self, true);
         } else {
             return (self, false);
+        }
+    }
+    pub fn try_accept_mut(&mut self, b: Bracket) -> bool {
+        if b.is_open() {
+            self.stack.push(b.index().unwrap());
+            return true;
+        } else if let Some(top) = self.stack.last() {
+            if b.index().map_or(false, |i| i != *top) {
+                return false;
+            }
+            self.stack.pop();
+            return true;
+        } else {
+            return false;
+        }
+    }
+    pub fn can_accept(&self, b: Bracket) -> bool {
+        if b.is_open() {
+            return true;
+        } else if let Some(top) = self.stack.last() {
+            if b.index().map_or(false, |i| i != *top) {
+                return false;
+            }
+            return true;
+        } else {
+            return false;
         }
     }
 }
@@ -144,17 +179,18 @@ impl Display for Lgraph {
                 write!(w1, "{}\\n", tok.name()).unwrap();
             }
             if let Some(bracket) = l.bracket() {
+                let idx = bracket.index().map_or("*".to_string(), |i| i.to_string());
                 write!(
                     w2,
                     "bracket_idx={}, bracket_open={}, ",
-                    bracket.index(),
+                    idx,
                     bracket.is_open()
                 )
                 .unwrap();
                 if bracket.is_open() {
-                    write!(w1, "({}\\n", bracket.index()).unwrap();
+                    write!(w1, "({}\\n", idx).unwrap();
                 } else {
-                    write!(w1, "){}\\n", bracket.index()).unwrap();
+                    write!(w1, "){}\\n", idx).unwrap();
                 }
             }
 

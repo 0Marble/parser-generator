@@ -50,8 +50,8 @@ impl TestParser for RuntimeParser {
             while !consumed && !(tok == None && g.is_end_node(state) && stack.top().is_none()) {
                 consumed = false;
                 let mut next = None;
-                let top = stack.top();
                 let mut bracket = None;
+
                 for (_, letter, to) in g.edges_from(state) {
                     if letter.tok().is_some() {
                         if letter.tok() != tok {
@@ -60,7 +60,7 @@ impl TestParser for RuntimeParser {
                         consumed = true;
                     }
                     if let Some(b) = letter.bracket() {
-                        if !b.is_open() && Some(b.index()) != top {
+                        if !stack.can_accept(b) {
                             continue;
                         }
                     }
@@ -76,7 +76,7 @@ impl TestParser for RuntimeParser {
                     }
 
                     if next.is_some() || bracket.is_some() {
-                        return Err(TraverseError::ConflictOn(state, tok, top));
+                        return Err(TraverseError::ConflictOn(state, tok, stack.top()));
                     }
                     next = Some(to);
                     bracket = letter.bracket();
@@ -84,7 +84,7 @@ impl TestParser for RuntimeParser {
                 if let Some(next) = next {
                     state = next;
                 } else {
-                    return Err(TraverseError::NoWayToContinue(state, tok, top));
+                    return Err(TraverseError::NoWayToContinue(state, tok, stack.top()));
                 }
                 if consumed {
                     write!(w, "{}, ", tok.as_ref().unwrap()).unwrap();
@@ -97,7 +97,7 @@ impl TestParser for RuntimeParser {
                         if let Some((j, nt)) = grammar
                             .non_terminals()
                             .enumerate()
-                            .find(|(j, _)| b.index() == *j)
+                            .find(|(j, _)| b.index() == Some(*j))
                         {
                             write!(w, "{nt}[{j}], ").unwrap();
                         }
