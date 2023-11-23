@@ -285,6 +285,21 @@ impl Lgraph {
                                 if let Some(n) = lr0.goto_idx(to, sym.clone()) {
                                     n
                                 } else {
+                                    println!(
+                                        "Sus {} -{}-> {} -{}[{}]-> {} -{}",
+                                        dispatch_node,
+                                        prod_idx,
+                                        from,
+                                        prod.lhs(),
+                                        prod_idx,
+                                        to,
+                                        sym
+                                    );
+                                    // We want the LR0 automata to actually have a connection
+                                    // from -A-> to -sym-> final
+                                    // But we actually have to look at the slr at that point
+                                    // because there might be a situation where
+                                    // to -sym-> some other dispatch node....
                                     continue;
                                 }
                             }

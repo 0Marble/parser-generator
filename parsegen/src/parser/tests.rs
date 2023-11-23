@@ -239,7 +239,7 @@ fn parens_grammar_slr() -> Grammar {
 }
 
 fn expr_grammar() -> Grammar {
-    Grammar::from_str("S -> E; E -> T add E; E -> T; T -> F mul T; T -> F; F -> id; F -> lp E rp;")
+    Grammar::from_str(" E -> T add E; E -> T; T -> F mul T; T -> F; F -> id; F -> lp E rp;")
         .unwrap()
 }
 
@@ -312,6 +312,7 @@ fn runtime_parser() {
 fn oops() {
     let g = Lgraph::slr(&expr_grammar());
     std::fs::write("tests/slr.dot", g.to_string()).unwrap();
+    println!("{}", expr_grammar());
     let mut p = RuntimeParser::default();
     p.init(g, expr_grammar());
     println!(
