@@ -181,7 +181,9 @@ impl Display for Lgraph {
                 write!(w1, "{}\\n", tok).unwrap();
             }
             if let Some(bracket) = l.bracket() {
-                let idx = bracket.index().map_or("*".to_string(), |i| i.to_string());
+                let idx = bracket
+                    .index()
+                    .map_or("\"\\*\"".to_string(), |i| i.to_string());
                 write!(
                     w2,
                     "bracket_idx={}, bracket_open={}, ",
@@ -189,6 +191,9 @@ impl Display for Lgraph {
                     bracket.is_open()
                 )
                 .unwrap();
+
+                let idx = bracket.index().map_or("\\*".to_string(), |i| i.to_string());
+
                 if bracket.is_open() {
                     write!(w1, "({}\\n", idx).unwrap();
                 } else {

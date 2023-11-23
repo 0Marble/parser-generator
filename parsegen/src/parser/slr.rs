@@ -2,7 +2,10 @@ use std::fmt::Display;
 
 use crate::{parser::grammar::Production, tokenizer::Token};
 
-use super::{grammar::Grammar, lgraph::Lgraph};
+use super::{
+    grammar::{Grammar, TokenOrEnd},
+    lgraph::{Bracket, Item, Lgraph},
+};
 
 struct LR0Automata {
     states: Vec<Vec<(usize, usize)>>,
@@ -120,6 +123,13 @@ impl LR0Automata {
 
         next_kernel
     }
+
+    fn goto_idx(&self, from: usize, sym: Token) -> Option<usize> {
+        self.goto
+            .iter()
+            .find(|(n, t, _)| n == &from && &sym == t)
+            .map(|a| a.2.clone())
+    }
 }
 
 impl Display for LR0Automata {
@@ -152,7 +162,165 @@ impl Display for LR0Automata {
 
 impl Lgraph {
     pub fn slr(grammar: &Grammar) -> Self {
-        todo!()
+        let lr0 = LR0Automata::new(grammar);
+        let first = lr0.grammar.first();
+        let follow = lr0.grammar.follow(&first);
+
+        let mut slr = Lgraph::default();
+        let start_node = lr0.states.len();
+        let end_node = lr0.states.len() + 1;
+        let dispatch_node_offset = lr0.states.len() + 2;
+        let mut path_node = dispatch_node_offset + lr0.grammar.terminals().count() + 1;
+        let bracket_offset = lr0.grammar.non_terminals().count();
+
+        for (from, sym, to) in lr0.goto.iter().cloned() {
+            if !lr0.grammar.is_terminal(sym.clone()) {
+                continue;
+            }
+
+            slr = slr.add_edge(
+                from,
+                Item::new(
+                    Some(TokenOrEnd::Token(sym)),
+                    None,
+                    Some(Bracket::new(to + bracket_offset, true)),
+                ),
+                to,
+            );
+        }
+
+        for (state_idx, kernel) in lr0.states.iter().enumerate() {
+            let state = LR0Automata::closure(&lr0.grammar, kernel);
+
+            for (prod_idx, spot) in state {
+                let prod = lr0.grammar.productions().nth(prod_idx).unwrap();
+                if spot != prod.rhs().len() {
+                    continue;
+                }
+
+                let follow_a = follow.follow(prod.lhs()).unwrap();
+                for sym in follow_a {
+                    let dispatch_node = match sym.as_token() {
+                        Some(tok) => {
+                            lr0.grammar
+                                .terminals()
+                                .enumerate()
+                                .find(|(_, t)| t == tok)
+                                .unwrap()
+                                .0
+                        }
+                        None => lr0.grammar.terminals().count(),
+                    } + dispatch_node_offset;
+
+                    // to dispatch
+                    if prod.rhs().len() == 0 {
+                        slr = slr.add_edge(
+                            state_idx,
+                            Item::new(Some(sym.clone()), None, Some(Bracket::new(prod_idx, true))),
+                            dispatch_node,
+                        );
+                    } else {
+                        slr = slr.add_edge(
+                            state_idx,
+                            Item::new(Some(sym.clone()), None, Some(Bracket::Wildcard)),
+                            path_node,
+                        );
+                        path_node += 1;
+
+                        for _ in 1..prod.rhs().len() {
+                            slr = slr.add_edge(
+                                path_node - 1,
+                                Item::new(None, None, Some(Bracket::Wildcard)),
+                                path_node,
+                            );
+                            path_node += 1;
+                        }
+
+                        slr = slr.add_edge(
+                            path_node - 1,
+                            Item::new(None, None, Some(Bracket::new(prod_idx, true))),
+                            dispatch_node,
+                        );
+                    }
+
+                    // from dispatch
+                    for (from, nt, to) in lr0.goto.iter().cloned() {
+                        if nt != prod.lhs() {
+                            continue;
+                        }
+
+                        let final_node = match sym.as_token() {
+                            Some(sym) => {
+                                if let Some(n) = lr0.goto_idx(to, sym.clone()) {
+                                    n
+                                } else {
+                                    continue;
+                                }
+                            }
+                            None => end_node,
+                        };
+                        let brackets = [
+                            Bracket::new(prod_idx, false),
+                            Bracket::new(from + bracket_offset, false),
+                            Bracket::new(from + bracket_offset, true),
+                            Bracket::new(to + bracket_offset, true),
+                            Bracket::new(final_node + bracket_offset, true),
+                        ];
+
+                        let mut prev = dispatch_node;
+                        for i in 0..brackets.len() {
+                            let item = Item::new(None, None, Some(brackets[i]));
+                            let next = if let Some((_, _, old)) =
+                                slr.edges().find(|(from, i, _)| from == &prev && i == &item)
+                            {
+                                prev = old;
+                                continue;
+                            } else if i + 1 == brackets.len() {
+                                final_node
+                            } else {
+                                path_node += 1;
+                                path_node - 1
+                            };
+
+                            slr = slr.add_edge(prev, item, next);
+                            prev = next;
+                        }
+                    }
+                }
+            }
+        }
+
+        let start_prod_idx = lr0
+            .grammar
+            .productions()
+            .enumerate()
+            .find(|(_, p)| p.lhs() == lr0.grammar.start())
+            .unwrap()
+            .0;
+        let start_state = lr0
+            .states
+            .iter()
+            .enumerate()
+            .find(|(_, kernel)| kernel.as_slice() == &[(start_prod_idx, 0)])
+            .unwrap()
+            .0;
+        slr = slr.add_edge(
+            start_node,
+            Item::new(
+                None,
+                None,
+                Some(Bracket::new(start_state + bracket_offset, true)),
+            ),
+            start_state,
+        );
+
+        slr.add_start_node(start_node)
+            .add_end_node(end_node)
+            .add_edge(
+                end_node,
+                Item::new(None, None, Some(Bracket::Wildcard)),
+                end_node,
+            )
     }
 }
 
