@@ -177,6 +177,14 @@ impl Grammar {
     pub fn start(&self) -> Token {
         self.start.clone()
     }
+    pub fn get_unique_token(&self, base_name: &str) -> Token {
+        for old_name in self.terminals().chain(self.non_terminals()) {
+            if old_name.name() == base_name {
+                return self.get_unique_token(&(base_name.to_string() + "a"));
+            }
+        }
+        Token::new(base_name)
+    }
 
     pub fn first(&self) -> First {
         let mut first: Vec<_> = self
