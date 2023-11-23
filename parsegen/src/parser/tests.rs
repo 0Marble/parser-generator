@@ -261,12 +261,12 @@ fn an_bm_c() -> Grammar {
 
 pub fn slr_gauntlet(t: &mut dyn TestParser) {
     for grammar in [
+        an_bm_c(),
         empty_language(),
         finite_language(),
         expr_grammar_ll1(),
         parens_grammar_simple(),
         simple_plang_ll1(),
-        an_bm_c(),
         parens_grammar_slr(),
         regex_grammar(),
         stack_expr(),

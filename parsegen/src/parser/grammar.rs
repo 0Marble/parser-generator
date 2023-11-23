@@ -250,13 +250,15 @@ impl Grammar {
                             if prod.lhs() == b {
                                 continue;
                             }
-
-                            for t in map
-                                .iter()
-                                .find(|(t, _)| t == &prod.lhs())
-                                .map(|(_, t)| t)
-                                .unwrap()
+                            let follow_a = if let Some((_, follow_a)) =
+                                map.iter().find(|(t, _)| t == &prod.lhs())
                             {
+                                follow_a
+                            } else {
+                                continue;
+                            };
+
+                            for t in follow_a {
                                 if b_follow.contains(t) {
                                     continue;
                                 }
