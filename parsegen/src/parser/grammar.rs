@@ -179,7 +179,10 @@ impl Grammar {
     }
 
     pub fn first(&self) -> First {
-        let mut first: Vec<_> = self.terminals().map(|t| (t.clone(), Some(t))).collect();
+        let mut first: Vec<_> = self
+            .terminals()
+            .map(|t| (t.clone(), TokenOrEps::Token(t)))
+            .collect();
         let mut stack: Vec<_> = self.productions().map(|p| p.lhs()).collect();
         stack.dedup();
 
@@ -187,7 +190,7 @@ impl Grammar {
             for prod in self.productions_for(nonterm.clone()) {
                 if let Some(a) = prod.rhs().first() {
                     if self.is_terminal(a.clone()) {
-                        first.push((nonterm.clone(), Some(a.clone())));
+                        first.push((nonterm.clone(), a.clone().into()));
                     } else {
                         let precomputed = first.iter().filter(|(t, _)| t == a).cloned();
                         let mut had_precomputed = false;
@@ -203,8 +206,8 @@ impl Grammar {
                             stack.push(a.clone());
                         }
                     }
-                } else if !first.contains(&(nonterm.clone(), None)) {
-                    first.push((nonterm.clone(), None));
+                } else if !first.contains(&(nonterm.clone(), TokenOrEps::Eps)) {
+                    first.push((nonterm.clone(), TokenOrEps::Eps));
                 }
             }
         }
@@ -213,7 +216,7 @@ impl Grammar {
     }
 
     pub fn follow(&self, first: &First) -> Follow {
-        let mut map = vec![(self.start(), vec![None])];
+        let mut map = vec![(self.start(), vec![TokenOrEnd::End])];
         let mut changed = true;
         while changed {
             changed = false;
@@ -238,7 +241,8 @@ impl Grammar {
                     // FOLLOW(A), or if FOLLOW(beta[0]) contains eps.
                     let beta_first = first.first_of_sent(beta).unwrap();
                     for t in beta_first {
-                        if t.is_some() {
+                        if let Some(tok) = t.as_token() {
+                            let t = TokenOrEnd::Token(tok.clone());
                             if b_follow.contains(&t) {
                                 continue;
                             }
@@ -378,64 +382,150 @@ impl<'a> Iterator for PossibleWords<'a> {
                     }
                 }
 
-                return Some((toks, String::from_utf8(derivation).unwrap()));
+                return Some((toks, String::from_utf8(derivation).unwrap() + "$, "));
             }
         }
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum TokenOrEnd {
+    Token(Token),
+    End,
+}
+
+impl Display for TokenOrEnd {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            TokenOrEnd::Token(t) => write!(f, "{t}"),
+            TokenOrEnd::End => write!(f, "$"),
+        }
+    }
+}
+
+impl From<Token> for TokenOrEnd {
+    fn from(v: Token) -> Self {
+        Self::Token(v)
+    }
+}
+
+impl TokenOrEnd {
+    /// Returns `true` if the token or end is [`Token`].
+    ///
+    /// [`Token`]: TokenOrEnd::Token
+    #[must_use]
+    pub fn is_token(&self) -> bool {
+        matches!(self, Self::Token(..))
+    }
+
+    pub fn as_token(&self) -> Option<&Token> {
+        if let Self::Token(v) = self {
+            Some(v)
+        } else {
+            None
+        }
+    }
+
+    /// Returns `true` if the token or end is [`End`].
+    ///
+    /// [`End`]: TokenOrEnd::End
+    #[must_use]
+    pub fn is_end(&self) -> bool {
+        matches!(self, Self::End)
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Follow {
-    map: Vec<(Token, Vec<Option<Token>>)>,
+    map: Vec<(Token, Vec<TokenOrEnd>)>,
 }
 
 impl Follow {
-    pub fn follow(&self, nonterm: Token) -> Option<&[Option<Token>]> {
+    pub fn follow(&self, nonterm: Token) -> Option<&[TokenOrEnd]> {
         self.map
             .iter()
             .find(|(t, _)| t == &nonterm)
             .map(|(_, follow)| follow.as_slice())
     }
 }
+
+#[derive(Debug, Clone, Hash, PartialEq, Eq)]
+pub enum TokenOrEps {
+    Token(Token),
+    Eps,
+}
+
+impl From<Token> for TokenOrEps {
+    fn from(v: Token) -> Self {
+        Self::Token(v)
+    }
+}
+
+impl TokenOrEps {
+    /// Returns `true` if the token or eps is [`Token`].
+    ///
+    /// [`Token`]: TokenOrEps::Token
+    #[must_use]
+    pub fn is_token(&self) -> bool {
+        matches!(self, Self::Token(..))
+    }
+
+    pub fn as_token(&self) -> Option<&Token> {
+        if let Self::Token(v) = self {
+            Some(v)
+        } else {
+            None
+        }
+    }
+
+    /// Returns `true` if the token or eps is [`Eps`].
+    ///
+    /// [`Eps`]: TokenOrEps::Eps
+    #[must_use]
+    pub fn is_eps(&self) -> bool {
+        matches!(self, Self::Eps)
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct First {
-    first: Vec<(Token, Vec<Option<Token>>)>,
+    first: Vec<(Token, Vec<TokenOrEps>)>,
 }
 
 impl First {
-    fn new(it: impl IntoIterator<Item = (Token, Option<Token>)>) -> Self {
-        let mut f: Vec<(Token, Vec<Option<Token>>)> = vec![];
+    fn new(it: impl IntoIterator<Item = (Token, TokenOrEps)>) -> Self {
+        let mut s = Self { first: vec![] };
         for (nt, t) in it {
-            if let Some((_, a)) = f.iter_mut().find(|(t, _)| *t == nt) {
+            if let Some((_, a)) = s.first.iter_mut().find(|(t, _)| *t == nt) {
                 a.push(t);
             } else {
-                f.push((nt, vec![t]));
+                s.first.push((nt, vec![t]));
             }
         }
 
-        Self { first: f }
+        s
     }
 
-    pub fn first(&self, nonterm: Token) -> Option<&[Option<Token>]> {
+    pub fn first(&self, nonterm: Token) -> Option<&[TokenOrEps]> {
         self.first
             .iter()
             .find(|(t, _)| t == &nonterm)
             .map(|(_, a)| a.as_ref())
     }
-    pub fn first_of_sent(&self, sent: &[Token]) -> Option<Vec<Option<Token>>> {
+    pub fn first_of_sent(&self, sent: &[Token]) -> Option<Vec<TokenOrEps>> {
         let mut f = vec![];
         for t in sent {
             let first_of_t = self.first(t.clone())?;
             for t in first_of_t {
-                if !f.contains(t) && t.is_some() {
+                if !f.contains(t) && t.is_token() {
                     f.push(t.clone());
                 }
             }
-            if !first_of_t.contains(&None) {
+            if !first_of_t.contains(&TokenOrEps::Eps) {
                 return Some(f);
             }
         }
-        f.push(None);
+        f.push(TokenOrEps::Eps);
 
         Some(f)
     }
@@ -503,15 +593,27 @@ mod tests {
         let g = Grammar::from_str(expr_grammar()).unwrap();
         let first = g.first();
 
-        let c = HashSet::from([Some(Token::new("id")), Some(Token::new("lp"))]);
+        let c = HashSet::from([
+            TokenOrEps::Token(Token::new("id")),
+            TokenOrEps::Token(Token::new("lp")),
+        ]);
         let actual_first = HashMap::from([
             (Token::new("S"), c.clone()),
             (Token::new("E"), c.clone()),
             (Token::new("T"), c.clone()),
             (Token::new("F"), c.clone()),
-            (Token::new("id"), HashSet::from([Some(Token::new("id"))])),
-            (Token::new("lp"), HashSet::from([Some(Token::new("lp"))])),
-            (Token::new("rp"), HashSet::from([Some(Token::new("rp"))])),
+            (
+                Token::new("id"),
+                HashSet::from([TokenOrEps::Token(Token::new("id"))]),
+            ),
+            (
+                Token::new("lp"),
+                HashSet::from([TokenOrEps::Token(Token::new("lp"))]),
+            ),
+            (
+                Token::new("rp"),
+                HashSet::from([TokenOrEps::Token(Token::new("rp"))]),
+            ),
         ]);
         for (nt, a) in actual_first {
             assert_eq!(
@@ -524,22 +626,44 @@ mod tests {
         let first = g.first();
 
         let actual_first = HashMap::from([
-            ("E", HashSet::from([Some("lp"), Some("id")])),
-            ("Ea", HashSet::from([Some("add"), None])),
-            ("T", HashSet::from([Some("lp"), Some("id")])),
-            ("Ta", HashSet::from([Some("mul"), None])),
-            ("F", HashSet::from([Some("lp"), Some("id")])),
-            ("id", HashSet::from([Some("id")])),
-            ("lp", HashSet::from([Some("lp")])),
-            ("rp", HashSet::from([Some("rp")])),
+            (
+                "E",
+                HashSet::from([
+                    TokenOrEps::Token(Token::new("lp")),
+                    TokenOrEps::Token(Token::new("id")),
+                ]),
+            ),
+            (
+                "Ea",
+                HashSet::from([TokenOrEps::Token(Token::new("add")), TokenOrEps::Eps]),
+            ),
+            (
+                "T",
+                HashSet::from([
+                    TokenOrEps::Token(Token::new("lp")),
+                    TokenOrEps::Token(Token::new("id")),
+                ]),
+            ),
+            (
+                "Ta",
+                HashSet::from([TokenOrEps::Token(Token::new("mul")), TokenOrEps::Eps]),
+            ),
+            (
+                "F",
+                HashSet::from([
+                    TokenOrEps::Token(Token::new("lp")),
+                    TokenOrEps::Token(Token::new("id")),
+                ]),
+            ),
+            ("id", HashSet::from([TokenOrEps::Token(Token::new("id"))])),
+            ("lp", HashSet::from([TokenOrEps::Token(Token::new("lp"))])),
+            ("rp", HashSet::from([TokenOrEps::Token(Token::new("rp"))])),
         ]);
 
-        for (nt, f) in actual_first {
+        for (nt, a) in actual_first {
             assert_eq!(
-                HashSet::<Option<Token>>::from_iter(
-                    first.first(Token::new(nt)).unwrap().iter().cloned()
-                ),
-                HashSet::from_iter(f.iter().map(|t| t.as_ref().map(Token::new)))
+                HashSet::from_iter(first.first(Token::new(nt)).unwrap().iter().cloned()),
+                a
             );
         }
     }
@@ -550,10 +674,28 @@ mod tests {
         let first = g.first();
         let follow = g.follow(&first);
         let actual_follow = HashMap::from([
-            ("S", vec![None]),
-            ("T", vec![Some("add"), Some("rp"), None]),
-            ("F", vec![Some("mul"), Some("add"), Some("rp"), None]),
-            ("E", vec![None, Some("rp")]),
+            ("S", vec![TokenOrEnd::End]),
+            (
+                "T",
+                vec![
+                    TokenOrEnd::Token(Token::new("add")),
+                    TokenOrEnd::Token(Token::new("rp")),
+                    TokenOrEnd::End,
+                ],
+            ),
+            (
+                "F",
+                vec![
+                    TokenOrEnd::Token(Token::new("mul")),
+                    TokenOrEnd::Token(Token::new("add")),
+                    TokenOrEnd::Token(Token::new("rp")),
+                    TokenOrEnd::End,
+                ],
+            ),
+            (
+                "E",
+                vec![TokenOrEnd::End, TokenOrEnd::Token(Token::new("rp"))],
+            ),
         ]);
         for (nt, f) in actual_follow {
             let tok = Token::new(nt);
@@ -562,7 +704,7 @@ mod tests {
                 f0.insert(t);
             }
             let mut f1 = HashSet::new();
-            for t in f.iter().map(|t| t.map(Token::new)) {
+            for t in f.iter().cloned() {
                 f1.insert(t);
             }
             assert_eq!(f0, f1);
@@ -572,12 +714,40 @@ mod tests {
         let first = g.first();
         let follow = g.follow(&first);
         let actual_follow = HashMap::from([
-            ("S", vec![None]),
-            ("Ea", vec![None, Some("rp")]),
-            ("T", vec![Some("add"), Some("rp"), None]),
-            ("Ta", vec![Some("add"), Some("rp"), None]),
-            ("F", vec![Some("mul"), Some("add"), Some("rp"), None]),
-            ("E", vec![None, Some("rp")]),
+            ("S", vec![TokenOrEnd::End]),
+            (
+                "Ea",
+                vec![TokenOrEnd::End, TokenOrEnd::Token(Token::new("rp"))],
+            ),
+            (
+                "T",
+                vec![
+                    TokenOrEnd::Token(Token::new("add")),
+                    TokenOrEnd::Token(Token::new("rp")),
+                    TokenOrEnd::End,
+                ],
+            ),
+            (
+                "Ta",
+                vec![
+                    TokenOrEnd::Token(Token::new("add")),
+                    TokenOrEnd::Token(Token::new("rp")),
+                    TokenOrEnd::End,
+                ],
+            ),
+            (
+                "F",
+                vec![
+                    TokenOrEnd::Token(Token::new("mul")),
+                    TokenOrEnd::Token(Token::new("add")),
+                    TokenOrEnd::Token(Token::new("rp")),
+                    TokenOrEnd::End,
+                ],
+            ),
+            (
+                "E",
+                vec![TokenOrEnd::End, TokenOrEnd::Token(Token::new("rp"))],
+            ),
         ]);
 
         for (nt, f) in actual_follow {
@@ -587,7 +757,7 @@ mod tests {
                 f0.insert(t);
             }
             let mut f1 = HashSet::new();
-            for t in f.iter().map(|t| t.map(Token::new)) {
+            for t in f.iter().cloned() {
                 f1.insert(t);
             }
             assert_eq!(f0, f1);

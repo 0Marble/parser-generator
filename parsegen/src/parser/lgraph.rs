@@ -2,6 +2,8 @@ use std::{fmt::Display, io::Cursor, io::Write};
 
 use crate::{regex::state_machine::StateMachine, tokenizer::Token};
 
+use super::grammar::TokenOrEnd;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Bracket {
     Open(usize),
@@ -31,15 +33,15 @@ impl Bracket {
 
 #[derive(Debug, Default, Clone, PartialEq, Eq, Hash)]
 pub struct Item {
-    tok: Option<Token>,
-    look_ahead: Option<Vec<Option<Token>>>,
+    tok: Option<TokenOrEnd>,
+    look_ahead: Option<Vec<TokenOrEnd>>,
     bracket: Option<Bracket>,
 }
 
 impl Item {
     pub fn new(
-        tok: Option<Token>,
-        look_ahead: Option<Vec<Option<Token>>>,
+        tok: Option<TokenOrEnd>,
+        look_ahead: Option<Vec<TokenOrEnd>>,
         bracket: Option<Bracket>,
     ) -> Self {
         Self {
@@ -49,13 +51,13 @@ impl Item {
         }
     }
 
-    pub fn tok(&self) -> Option<Token> {
+    pub fn tok(&self) -> Option<TokenOrEnd> {
         self.tok.clone()
     }
     pub fn bracket(&self) -> Option<Bracket> {
         self.bracket.clone()
     }
-    pub fn look_ahead(&self) -> Option<&[Option<Token>]> {
+    pub fn look_ahead(&self) -> Option<&[TokenOrEnd]> {
         self.look_ahead.as_ref().map(|t| t.as_slice())
     }
 }
@@ -175,8 +177,8 @@ impl Display for Lgraph {
             let mut w2 = Cursor::new(&mut attribs);
             let w2 = &mut w2;
             if let Some(tok) = l.tok() {
-                write!(w2, "token=\"{}\", ", tok.name()).unwrap();
-                write!(w1, "{}\\n", tok.name()).unwrap();
+                write!(w2, "token=\"{}\", ", tok).unwrap();
+                write!(w1, "{}\\n", tok).unwrap();
             }
             if let Some(bracket) = l.bracket() {
                 let idx = bracket.index().map_or("*".to_string(), |i| i.to_string());
@@ -199,13 +201,8 @@ impl Display for Lgraph {
                 write!(w1, "[").unwrap();
                 let look_ahead_len = look_ahead.iter().count();
                 for (i, tok) in look_ahead.iter().enumerate() {
-                    if let Some(tok) = tok {
-                        write!(w2, "{tok}").unwrap();
-                        write!(w1, "{tok}").unwrap();
-                    } else {
-                        write!(w2, "$").unwrap();
-                        write!(w1, "$").unwrap();
-                    }
+                    write!(w1, "{tok}").unwrap();
+                    write!(w2, "{tok}").unwrap();
                     if i + 1 < look_ahead_len {
                         write!(w2, ",").unwrap();
                         write!(w1, ",").unwrap();

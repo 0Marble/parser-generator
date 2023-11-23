@@ -3,15 +3,15 @@ use std::{io::Cursor, io::Write, str::FromStr, string::FromUtf8Error};
 use crate::tokenizer::Token;
 
 use super::{
-    grammar::Grammar,
+    grammar::{Grammar, TokenOrEnd},
     lgraph::{Lgraph, Stack},
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TraverseError {
     FromUtf8(FromUtf8Error),
-    ConflictOn(usize, Option<Token>, Option<usize>),
-    NoWayToContinue(usize, Option<Token>, Option<usize>),
+    ConflictOn(usize, TokenOrEnd, Option<usize>),
+    NoWayToContinue(usize, TokenOrEnd, Option<usize>),
     NotAnEndState(usize),
     StackNotEmptied(Stack),
 }
@@ -43,34 +43,44 @@ impl TestParser for RuntimeParser {
         let mut state = g.start_nodes().next().unwrap();
         let mut stack = Stack::new();
         for i in 0..=toks.len() {
-            let tok = toks.get(i).cloned();
-            let next_tok = toks.get(i + 1).cloned();
+            let tok = toks
+                .get(i)
+                .cloned()
+                .map(TokenOrEnd::Token)
+                .unwrap_or(TokenOrEnd::End);
+            let next_tok = toks
+                .get(i + 1)
+                .cloned()
+                .map(TokenOrEnd::Token)
+                .unwrap_or(TokenOrEnd::End);
             let mut consumed = false;
 
-            while !consumed && !(tok == None && g.is_end_node(state) && stack.top().is_none()) {
+            while !consumed {
                 consumed = false;
                 let mut next = None;
                 let mut bracket = None;
 
                 for (_, letter, to) in g.edges_from(state) {
-                    if letter.tok().is_some() {
-                        if letter.tok() != tok {
+                    if let Some(t) = letter.tok() {
+                        if t != tok {
                             continue;
                         }
                         consumed = true;
                     }
                     if let Some(b) = letter.bracket() {
                         if !stack.can_accept(b) {
+                            consumed = false;
                             continue;
                         }
                     }
                     if let Some(look_ahead) = letter.look_ahead() {
                         let cmp = if consumed {
-                            next_tok.as_ref()
+                            next_tok.clone()
                         } else {
-                            tok.as_ref()
+                            tok.clone()
                         };
-                        if !look_ahead.iter().any(|t| t.as_ref() == cmp) {
+                        if !look_ahead.iter().any(|t| t == &cmp) {
+                            consumed = false;
                             continue;
                         }
                     }
@@ -87,7 +97,7 @@ impl TestParser for RuntimeParser {
                     return Err(TraverseError::NoWayToContinue(state, tok, stack.top()));
                 }
                 if consumed {
-                    write!(w, "{}, ", tok.as_ref().unwrap()).unwrap();
+                    write!(w, "{}, ", tok).unwrap();
                 }
                 if let Some(b) = bracket {
                     let (next_stack, ok) = stack.try_accept(b);
@@ -106,11 +116,11 @@ impl TestParser for RuntimeParser {
             }
         }
 
-        if !g.is_end_node(state) {
-            return Err(TraverseError::NotAnEndState(state));
-        }
         if stack.top().is_some() {
             return Err(TraverseError::StackNotEmptied(stack));
+        }
+        if !g.is_end_node(state) {
+            return Err(TraverseError::NotAnEndState(state));
         }
 
         Ok(String::from_utf8(res)?)

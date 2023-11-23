@@ -1,5 +1,8 @@
 use super::{grammar::Grammar, lgraph::Lgraph};
-use crate::parser::lgraph::{Bracket, Item};
+use crate::parser::{
+    grammar::{TokenOrEnd, TokenOrEps},
+    lgraph::{Bracket, Item},
+};
 
 impl Lgraph {
     pub fn ll1(grammar: &Grammar) -> Self {
@@ -19,20 +22,26 @@ impl Lgraph {
                     assert!(
                         alpha_first
                             .iter()
-                            .all(|a| !beta_first.contains(a) || a.is_none()),
+                            .all(|a| !beta_first.contains(a) || a.is_eps()),
                         "Grammar not LL1: FIRST set conflict on {alpha_prod} and {beta_prod}"
                     );
 
                     let a_follow = follow.follow(nt.clone()).unwrap();
-                    if alpha_first.contains(&None) {
+                    if alpha_first.contains(&TokenOrEps::Eps) {
                         assert!(
-                        beta_first.iter().all(|a| !a_follow.contains(a)) && !beta_first.contains(&None),
-                        "Grammar not LL1: FIRST and FOLLOW conflict on {alpha_prod} and {beta_prod}"
-                    );
-                    } else if beta_first.contains(&None) {
+                            beta_first
+                                .iter()
+                                .all(|a| a.as_token().map_or(false, |a| !a_follow
+                                    .contains(&TokenOrEnd::Token(a.clone())))),
+                            "Grammar not LL1: FIRST and FOLLOW conflict on {alpha_prod} and {beta_prod}"
+                        );
+                    } else if beta_first.contains(&TokenOrEps::Eps) {
                         assert!(
-                            alpha_first.iter().all(|a| !a_follow.contains(a)),
-                        "Grammar not LL1: FIRST and FOLLOW conflict on {alpha_prod} and {beta_prod}"
+                            alpha_first
+                                .iter()
+                                .all(|a| a.as_token().map_or(false, |a| !a_follow
+                                    .contains(&TokenOrEnd::Token(a.clone())))),
+                            "Grammar not LL1: FIRST and FOLLOW conflict on {alpha_prod} and {beta_prod}"
                         );
                     }
                 }
@@ -63,8 +72,8 @@ impl Lgraph {
             let mut had_eps = false;
             let first_alpha = first.first_of_sent(prod.rhs()).unwrap();
             for t in first_alpha {
-                if t.is_some() {
-                    look_ahead.push(t.clone());
+                if let TokenOrEps::Token(t) = t {
+                    look_ahead.push(TokenOrEnd::Token(t.clone()));
                 } else {
                     had_eps = true;
                 }
@@ -118,7 +127,7 @@ impl Lgraph {
                     node_count - 1
                 };
                 if grammar.is_terminal(t.clone()) {
-                    let item = Item::new(Some(t.clone()), None, None);
+                    let item = Item::new(Some(TokenOrEnd::Token(t.clone())), None, None);
                     ll1 = ll1.add_edge(source, item, target);
                 } else {
                     for (prod2_idx, prod2) in grammar.productions().enumerate() {
@@ -136,8 +145,8 @@ impl Lgraph {
                         let mut following = vec![];
                         let mut had_eps = false;
                         for t in first_beta {
-                            if t.is_some() {
-                                following.push(t);
+                            if let Some(t) = t.as_token() {
+                                following.push(TokenOrEnd::Token(t.clone()));
                             } else {
                                 had_eps = true;
                             }
@@ -180,8 +189,8 @@ impl Lgraph {
                 Some(Bracket::new(bracket_count, true)),
             );
             let end_item = Item::new(
+                Some(TokenOrEnd::End),
                 None,
-                Some(vec![None]),
                 Some(Bracket::new(bracket_count, false)),
             );
             ll1 = ll1.add_edge(start_node, start_item, 4 * i);
