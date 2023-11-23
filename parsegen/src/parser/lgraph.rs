@@ -128,47 +128,63 @@ impl Stack {
 }
 
 #[derive(Debug, Default, Clone, PartialEq)]
-pub struct Lgraph(StateMachine<Item>);
+pub struct Lgraph {
+    inner: StateMachine<Item>,
+    node_labels: Vec<(usize, String)>,
+}
 
 impl Lgraph {
-    pub fn add_edge(self, from: usize, letter: Item, to: usize) -> Self {
-        Self(self.0.add_edge(from, letter, to))
+    pub fn add_edge(mut self, from: usize, letter: Item, to: usize) -> Self {
+        self.inner = self.inner.add_edge(from, letter, to);
+        self
     }
 
-    pub fn add_end_node(self, n: usize) -> Self {
-        Self(self.0.add_end_node(n))
+    pub fn add_end_node(mut self, n: usize) -> Self {
+        self.inner = self.inner.add_end_node(n);
+        self
     }
 
-    pub fn add_node(self, n: usize) -> Self {
-        Self(self.0.add_node(n))
+    pub fn add_node(mut self, n: usize) -> Self {
+        self.inner = self.inner.add_node(n);
+        self
     }
 
-    pub fn add_start_node(self, n: usize) -> Self {
-        Self(self.0.add_start_node(n))
+    pub fn add_start_node(mut self, n: usize) -> Self {
+        self.inner = self.inner.add_start_node(n);
+        self
     }
 
     pub fn edges(&self) -> impl Iterator<Item = (usize, Item, usize)> + '_ {
-        self.0.edges()
+        self.inner.edges()
     }
 
     pub fn edges_from(&self, n: usize) -> impl Iterator<Item = (usize, Item, usize)> + '_ {
-        self.0.edges_from(n)
+        self.inner.edges_from(n)
     }
 
     pub fn end_nodes(&self) -> impl Iterator<Item = usize> + '_ {
-        self.0.end_nodes()
+        self.inner.end_nodes()
     }
 
     pub fn is_end_node(&self, n: usize) -> bool {
-        self.0.is_end_node(n)
+        self.inner.is_end_node(n)
     }
 
     pub fn nodes(&self) -> impl Iterator<Item = usize> + '_ {
-        self.0.nodes()
+        self.inner.nodes()
     }
 
     pub fn start_nodes(&self) -> impl Iterator<Item = usize> + '_ {
-        self.0.start_nodes()
+        self.inner.start_nodes()
+    }
+
+    pub fn set_node_label(mut self, node: usize, label: impl ToString) -> Self {
+        if let Some((_, old)) = self.node_labels.iter_mut().find(|(n, _)| *n == node) {
+            *old = label.to_string();
+        } else {
+            self.node_labels.push((node, label.to_string()));
+        }
+        self
     }
 }
 
@@ -178,8 +194,12 @@ impl Display for Lgraph {
 
         writeln!(f, "  Q1 -> \"{}\";", self.start_nodes().next().unwrap())?;
 
+        for (node, label) in self.node_labels.iter() {
+            writeln!(f, "  {node} [label=\"{label}\", shape=record];")?;
+        }
+
         for (a, l, b) in self.edges() {
-            write!(f, "{a} -> {b}")?;
+            write!(f, "  {a} -> {b}")?;
             let mut label: Vec<u8> = vec![];
             let mut w1 = Cursor::new(&mut label);
             let w1 = &mut w1;

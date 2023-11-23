@@ -307,3 +307,22 @@ fn runtime_parser() {
     println!("testing slr");
     slr_gauntlet(&mut RuntimeParser::default());
 }
+
+#[test]
+fn oops() {
+    let g = Lgraph::slr(&expr_grammar());
+    std::fs::write("tests/slr.dot", g.to_string()).unwrap();
+    let mut p = RuntimeParser::default();
+    p.init(g, expr_grammar());
+    println!(
+        "{}",
+        p.parse(&[
+            Token::new("id"),
+            Token::new("mul"),
+            Token::new("id"),
+            Token::new("add"),
+            Token::new("id"),
+        ])
+        .unwrap()
+    )
+}

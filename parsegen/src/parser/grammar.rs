@@ -299,6 +299,7 @@ pub struct PossibleWords<'a> {
     max_depth: Option<usize>,
     stack: Vec<LinkedList<Node>>,
     next_stack: Vec<LinkedList<Node>>,
+    mirrored: bool,
 }
 
 impl<'a> PossibleWords<'a> {
@@ -309,11 +310,16 @@ impl<'a> PossibleWords<'a> {
             max_depth: None,
             next_stack: vec![LinkedList::from([Node::Leaf(grammar.start())])],
             stack: vec![],
+            mirrored: false,
         }
     }
 
     pub fn with_derivation_count(mut self, derivation_count: usize) -> Self {
         self.max_depth = Some(derivation_count);
+        self
+    }
+    pub fn mirrored(mut self) -> Self {
+        self.mirrored = !self.mirrored;
         self
     }
 }
@@ -370,10 +376,12 @@ impl<'a> Iterator for PossibleWords<'a> {
                 if had_nonterms {
                     continue;
                 }
+
                 let mut toks = vec![];
                 let mut derivation: Vec<u8> = vec![];
                 let mut w = Cursor::new(&mut derivation);
                 let w = &mut w;
+
                 for node in tree {
                     match node {
                         Node::Leaf(tok) => {

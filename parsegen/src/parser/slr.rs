@@ -1,4 +1,4 @@
-use std::fmt::Display;
+use std::{fmt::Display, io::Cursor};
 
 use crate::{parser::grammar::Production, tokenizer::Token};
 
@@ -130,27 +130,45 @@ impl LR0Automata {
             .find(|(n, t, _)| n == &from && &sym == t)
             .map(|a| a.2.clone())
     }
+
+    fn state_descirption(
+        w: &mut dyn std::io::Write,
+        closure: &[(usize, usize)],
+        state_index: usize,
+        grammar: &Grammar,
+    ) -> std::io::Result<()> {
+        write!(w, "{{{state_index} |")?;
+        for (prod_index, spot) in closure {
+            let prod = grammar.productions().nth(*prod_index).unwrap();
+            write!(w, "{} \\-\\> ", prod.lhs())?;
+            for i in 0..*spot {
+                write!(w, "{} ", prod.rhs()[i])?;
+            }
+            write!(w, ".")?;
+            for i in *spot..prod.rhs().len() {
+                write!(w, "{} ", prod.rhs()[i])?;
+            }
+            write!(w, "\\n")?;
+        }
+        write!(w, "}}")
+    }
 }
 
 impl Display for LR0Automata {
     fn fmt(&self, w: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         writeln!(w, "digraph {{")?;
         for (state_index, kernel) in self.states.iter().enumerate() {
-            write!(w, "  {state_index} [shape=record, label=\"{{{state_index}|")?;
+            write!(w, "  {state_index} [shape=record, label=\"")?;
             let closure = Self::closure(&self.grammar, kernel);
-            for (prod_index, spot) in closure {
-                let prod = self.grammar.productions().nth(prod_index).unwrap();
-                write!(w, "{} \\-\\> ", prod.lhs())?;
-                for i in 0..spot {
-                    write!(w, "{} ", prod.rhs()[i])?;
-                }
-                write!(w, ".")?;
-                for i in spot..prod.rhs().len() {
-                    write!(w, "{} ", prod.rhs()[i])?;
-                }
-                write!(w, "\\n")?;
-            }
-            writeln!(w, "}}\"];")?;
+            let mut buf = vec![];
+            Self::state_descirption(
+                &mut Cursor::new(&mut buf),
+                &closure,
+                state_index,
+                &self.grammar,
+            )
+            .unwrap();
+            writeln!(w, "{}\"];", String::from_utf8(buf).unwrap())?;
         }
 
         for (from, sym, to) in self.goto.iter() {
@@ -191,6 +209,15 @@ impl Lgraph {
 
         for (state_idx, kernel) in lr0.states.iter().enumerate() {
             let state = LR0Automata::closure(&lr0.grammar, kernel);
+            let mut buf = vec![];
+            LR0Automata::state_descirption(
+                &mut Cursor::new(&mut buf),
+                &state,
+                state_idx,
+                &lr0.grammar,
+            )
+            .unwrap();
+            slr = slr.set_node_label(state_idx, String::from_utf8(buf).unwrap());
 
             for (prod_idx, spot) in state {
                 let prod = lr0.grammar.productions().nth(prod_idx).unwrap();
@@ -211,6 +238,10 @@ impl Lgraph {
                         }
                         None => lr0.grammar.terminals().count(),
                     } + dispatch_node_offset;
+                    slr = slr.set_node_label(
+                        dispatch_node,
+                        format!("{{{dispatch_node}|{sym} dispatch node}}"),
+                    );
 
                     // to dispatch
                     if prod.rhs().len() == 0 {
