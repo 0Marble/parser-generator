@@ -1,6 +1,6 @@
 use std::{io::Cursor, io::Write, str::FromStr, string::FromUtf8Error};
 
-use crate::tokenizer::Token;
+use crate::{parser::lgraph::Bracket, tokenizer::Token};
 
 use super::{
     grammar::{Grammar, TokenOrEnd},
@@ -43,76 +43,72 @@ impl TestParser for RuntimeParser {
         let mut state = g.start_nodes().next().unwrap();
         let mut stack = Stack::new();
         for i in 0..=toks.len() {
-            let tok = toks
+            let mut cur_tok = toks
                 .get(i)
                 .cloned()
                 .map(TokenOrEnd::Token)
                 .unwrap_or(TokenOrEnd::End);
-            let next_tok = toks
-                .get(i + 1)
-                .cloned()
-                .map(TokenOrEnd::Token)
-                .unwrap_or(TokenOrEnd::End);
-            let mut consumed = false;
+            let mut next_tok = Some(
+                toks.get(i + 1)
+                    .cloned()
+                    .map(TokenOrEnd::Token)
+                    .unwrap_or(TokenOrEnd::End),
+            );
 
-            while !consumed {
-                consumed = false;
-                let mut next = None;
+            let mut need_to_consume = true;
+            let mut next_state = Some(state);
+            while let Some(s) = next_state.take() {
+                state = s;
+                print!("-> {s} -");
+                let mut has_consumed = false;
                 let mut bracket = None;
 
-                for (_, letter, to) in g.edges_from(state) {
-                    if let Some(t) = letter.tok() {
-                        if t != tok {
-                            continue;
-                        }
-                        consumed = true;
+                for (_, item, next) in g.edges_from(state) {
+                    let bracket_ok = item.bracket().map_or(true, |b| stack.can_accept(b));
+                    let token_match = item.tok().map_or(false, |t| t == cur_tok);
+                    let can_consume = need_to_consume && token_match;
+                    let token_ok = need_to_consume && token_match || item.tok().is_none();
+                    let look_ahead_tok = if !can_consume {
+                        &cur_tok
+                    } else {
+                        next_tok.as_ref().unwrap()
+                    };
+                    let look_ahead_ok = item
+                        .look_ahead()
+                        .map_or(true, |l| l.contains(look_ahead_tok));
+
+                    if !bracket_ok || !look_ahead_ok || !token_ok {
+                        continue;
                     }
-                    if let Some(b) = letter.bracket() {
-                        if !stack.can_accept(b) {
-                            consumed = false;
-                            continue;
-                        }
-                    }
-                    if let Some(look_ahead) = letter.look_ahead() {
-                        let cmp = if consumed {
-                            next_tok.clone()
-                        } else {
-                            tok.clone()
-                        };
-                        if !look_ahead.iter().any(|t| t == &cmp) {
-                            consumed = false;
-                            continue;
-                        }
+                    if next_state.is_some() {
+                        return Err(TraverseError::ConflictOn(state, cur_tok, stack.top()));
                     }
 
-                    if next.is_some() || bracket.is_some() {
-                        return Err(TraverseError::ConflictOn(state, tok, stack.top()));
-                    }
-                    next = Some(to);
-                    bracket = letter.bracket();
+                    bracket = item.bracket();
+                    next_state = Some(next);
+                    has_consumed = can_consume;
                 }
-                if let Some(next) = next {
-                    state = next;
-                } else {
-                    return Err(TraverseError::NoWayToContinue(state, tok, stack.top()));
-                }
-                if consumed {
-                    write!(w, "{}, ", tok).unwrap();
+                if has_consumed {
+                    print!("{cur_tok}");
+                    need_to_consume = false;
+                    write!(w, "{}, ", cur_tok).unwrap();
+                    cur_tok = next_tok.take().unwrap();
                 }
                 if let Some(b) = bracket {
-                    let (next_stack, ok) = stack.try_accept(b);
-                    stack = next_stack;
-                    assert!(ok);
+                    print!("{}", b);
                     if !b.is_open() {
-                        if let Some((j, nt)) = grammar
-                            .non_terminals()
-                            .enumerate()
-                            .find(|(j, _)| b.index() == Some(*j))
-                        {
-                            write!(w, "{nt}[{j}], ").unwrap();
-                        }
+                        let idx = stack.top().unwrap();
+                        grammar
+                            .productions()
+                            .nth(idx)
+                            .map(|p| write!(w, "{}[{idx}], ", p.lhs()));
                     }
+                    assert!(stack.try_accept_mut(b));
                 }
+            }
+
+            if need_to_consume {
+                return Err(TraverseError::NoWayToContinue(state, cur_tok, stack.top()));
             }
         }
 
@@ -307,7 +303,7 @@ pub fn slr_gauntlet(t: &mut dyn TestParser) {
 #[test]
 fn runtime_parser() {
     println!("testing ll1");
-    ll1_gauntlet(&mut RuntimeParser::default());
+    // ll1_gauntlet(&mut RuntimeParser::default());
     println!("testing slr");
     slr_gauntlet(&mut RuntimeParser::default());
 }

@@ -11,6 +11,16 @@ pub enum Bracket {
     Wildcard,
 }
 
+impl Display for Bracket {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Bracket::Open(i) => write!(f, "({i}"),
+            Bracket::Closed(i) => write!(f, "){i}"),
+            Bracket::Wildcard => write!(f, ")*"),
+        }
+    }
+}
+
 impl Bracket {
     pub fn new(index: usize, is_open: bool) -> Self {
         if is_open {
