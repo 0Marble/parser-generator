@@ -266,24 +266,21 @@ fn an_bm_c() -> Grammar {
 }
 
 pub fn slr_gauntlet(t: &mut dyn TestParser) {
-    for grammar in [
-        an_bm_c(),
-        empty_language(),
-        finite_language(),
-        expr_grammar_ll1(),
-        parens_grammar_simple(),
-        simple_plang_ll1(),
-        parens_grammar_slr(),
-        regex_grammar(),
-        stack_expr(),
-        expr_grammar(),
-        json_grammar(),
+    for (grammar, name) in [
+        (an_bm_c(), "an_bm_c"),
+        (empty_language(), "empty_language"),
+        (finite_language(), "finite_language"),
+        (expr_grammar_ll1(), "expr_grammar_ll1"),
+        (parens_grammar_simple(), "parens_grammar_simple"),
+        (simple_plang_ll1(), "simple_plang_ll1"),
+        (parens_grammar_slr(), "parens_grammar_slr"),
+        (regex_grammar(), "regex_grammar"),
+        (stack_expr(), "stack_expr"),
+        (expr_grammar(), "expr_grammar"),
+        (json_grammar(), "json_grammar"),
     ] {
-        let g = Lgraph::slr(&grammar);
-        std::fs::File::create("tests/slr.dot")
-            .unwrap()
-            .write_all(g.to_string().as_bytes())
-            .unwrap();
+        let g = Lgraph::slr_with_lookahead(&grammar);
+        std::fs::write(format!("tests/slr-{}.dot", name), g.to_string()).unwrap();
         t.init(g, grammar.clone());
         for (toks, tree) in grammar.possible_words().take(500) {
             let s = toks.iter().fold(String::new(), |mut acc, tok| {
@@ -303,14 +300,14 @@ pub fn slr_gauntlet(t: &mut dyn TestParser) {
 #[test]
 fn runtime_parser() {
     println!("testing ll1");
-    // ll1_gauntlet(&mut RuntimeParser::default());
+    ll1_gauntlet(&mut RuntimeParser::default());
     println!("testing slr");
     slr_gauntlet(&mut RuntimeParser::default());
 }
 
 #[test]
 fn oops() {
-    let g = Lgraph::slr(&expr_grammar());
+    let g = Lgraph::slr_with_lookahead(&expr_grammar());
     std::fs::write("tests/slr.dot", g.to_string()).unwrap();
     println!("{}", expr_grammar());
     let mut p = RuntimeParser::default();

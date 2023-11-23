@@ -179,7 +179,7 @@ impl Display for LR0Automata {
 }
 
 impl Lgraph {
-    pub fn slr(grammar: &Grammar) -> Self {
+    pub fn slr_with_lookahead(grammar: &Grammar) -> Self {
         let lr0 = LR0Automata::new(grammar);
         let first = lr0.grammar.first();
         let follow = lr0.grammar.follow(&first);
@@ -247,13 +247,17 @@ impl Lgraph {
                     if prod.rhs().len() == 0 {
                         slr = slr.add_edge(
                             state_idx,
-                            Item::new(Some(sym.clone()), None, Some(Bracket::new(prod_idx, true))),
+                            Item::new(
+                                None,
+                                Some(vec![sym.clone()]),
+                                Some(Bracket::new(prod_idx, true)),
+                            ),
                             dispatch_node,
                         );
                     } else {
                         slr = slr.add_edge(
                             state_idx,
-                            Item::new(Some(sym.clone()), None, Some(Bracket::Wildcard)),
+                            Item::new(None, Some(vec![sym.clone()]), Some(Bracket::Wildcard)),
                             path_node,
                         );
                         path_node += 1;
@@ -280,37 +284,11 @@ impl Lgraph {
                             continue;
                         }
 
-                        let final_node = match sym.as_token() {
-                            Some(sym) => {
-                                if let Some(n) = lr0.goto_idx(to, sym.clone()) {
-                                    n
-                                } else {
-                                    println!(
-                                        "Sus {} -{}-> {} -{}[{}]-> {} -{}",
-                                        dispatch_node,
-                                        prod_idx,
-                                        from,
-                                        prod.lhs(),
-                                        prod_idx,
-                                        to,
-                                        sym
-                                    );
-                                    // We want the LR0 automata to actually have a connection
-                                    // from -A-> to -sym-> final
-                                    // But we actually have to look at the slr at that point
-                                    // because there might be a situation where
-                                    // to -sym-> some other dispatch node....
-                                    continue;
-                                }
-                            }
-                            None => end_node,
-                        };
                         let brackets = [
                             Bracket::new(prod_idx, false),
                             Bracket::new(from + bracket_offset, false),
                             Bracket::new(from + bracket_offset, true),
                             Bracket::new(to + bracket_offset, true),
-                            Bracket::new(final_node + bracket_offset, true),
                         ];
 
                         let mut prev = dispatch_node;
@@ -322,7 +300,7 @@ impl Lgraph {
                                 prev = old;
                                 continue;
                             } else if i + 1 == brackets.len() {
-                                final_node
+                                to
                             } else {
                                 path_node += 1;
                                 path_node - 1
@@ -365,6 +343,15 @@ impl Lgraph {
             .add_edge(
                 end_node,
                 Item::new(None, None, Some(Bracket::Wildcard)),
+                end_node,
+            )
+            .add_edge(
+                dispatch_node_offset + lr0.grammar.terminals().count(),
+                Item::new(
+                    Some(TokenOrEnd::End),
+                    None,
+                    Some(Bracket::new(start_prod_idx, false)),
+                ),
                 end_node,
             )
     }
