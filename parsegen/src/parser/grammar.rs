@@ -159,6 +159,13 @@ impl Grammar {
         res
     }
 
+    pub fn terminal_index(&self, t: Token) -> Option<usize> {
+        self.terminals()
+            .enumerate()
+            .find(|(_, s)| s == &t)
+            .map(|(i, _)| i)
+    }
+
     pub fn productions(&self) -> impl Iterator<Item = &Production> {
         self.productions.iter()
     }
@@ -189,38 +196,54 @@ impl Grammar {
     pub fn first(&self) -> First {
         let mut first: Vec<_> = self
             .terminals()
-            .map(|t| (t.clone(), TokenOrEps::Token(t)))
+            .map(|t| (t.clone(), vec![TokenOrEps::Token(t)]))
+            .chain(self.non_terminals().map(|nt| (nt.clone(), vec![])))
             .collect();
-        let mut stack: Vec<_> = self.productions().map(|p| p.lhs()).collect();
-        stack.dedup();
+        let mut changed = true;
+        while changed {
+            changed = false;
 
-        while let Some(nonterm) = stack.pop() {
-            for prod in self.productions_for(nonterm.clone()) {
-                if let Some(a) = prod.rhs().first() {
-                    if self.is_terminal(a.clone()) {
-                        first.push((nonterm.clone(), a.clone().into()));
-                    } else {
-                        let precomputed = first.iter().filter(|(t, _)| t == a).cloned();
-                        let mut had_precomputed = false;
-                        let mut new = vec![];
+            for prod in self.productions() {
+                let (a_idx, _) = first
+                    .iter()
+                    .enumerate()
+                    .find(|(_, (t, _))| t == &prod.lhs())
+                    .unwrap();
 
-                        for (_, t) in precomputed {
-                            had_precomputed = true;
-                            new.push((nonterm.clone(), t.clone()));
+                let mut a_first = first[a_idx].1.clone();
+
+                let mut had_eps = true;
+                for y in prod.rhs() {
+                    let (_, y_first) = first.iter().find(|(t, _)| t == y).unwrap();
+                    had_eps = false;
+
+                    for y_first in y_first {
+                        if y_first.is_eps() {
+                            had_eps = true;
+                            continue;
                         }
-                        first.append(&mut new);
-                        if !had_precomputed {
-                            stack.push(nonterm.clone());
-                            stack.push(a.clone());
+                        if a_first.contains(y_first) {
+                            continue;
                         }
+                        a_first.push(y_first.clone());
+                        changed = true;
                     }
-                } else if !first.contains(&(nonterm.clone(), TokenOrEps::Eps)) {
-                    first.push((nonterm.clone(), TokenOrEps::Eps));
+
+                    if !had_eps {
+                        break;
+                    }
                 }
+
+                if had_eps && !a_first.contains(&TokenOrEps::Eps) {
+                    a_first.push(TokenOrEps::Eps);
+                    changed = true;
+                }
+
+                first[a_idx].1 = a_first;
             }
         }
 
-        First::new(first)
+        First { first }
     }
 
     pub fn follow(&self, first: &First) -> Follow {

@@ -112,11 +112,11 @@ impl TestParser for RuntimeParser {
             }
         }
 
-        if stack.top().is_some() {
-            return Err(TraverseError::StackNotEmptied(stack));
-        }
         if !g.is_end_node(state) {
             return Err(TraverseError::NotAnEndState(state));
+        }
+        if stack.top().is_some() {
+            return Err(TraverseError::StackNotEmptied(stack));
         }
 
         Ok(String::from_utf8(res)?)
@@ -204,20 +204,17 @@ VALS -> VALUE coma VALS | ;
 }
 
 pub fn ll1_gauntlet(t: &mut dyn TestParser) {
-    for grammar in [
-        empty_language(),
-        finite_language(),
-        expr_grammar_ll1(),
-        parens_grammar_simple(),
-        simple_plang_ll1(),
-        non_slr_bu_ll1(),
-        json_grammar(),
+    for (grammar, name) in [
+        (empty_language(), "empty_language"),
+        (finite_language(), "finite_language"),
+        (expr_grammar_ll1(), "expr_grammar_ll1"),
+        (parens_grammar_simple(), "parens_grammar_simple"),
+        (simple_plang_ll1(), "simple_plang_ll1"),
+        (non_slr_bu_ll1(), "non_slr_bu_ll1"),
+        (json_grammar(), "json_grammar"),
     ] {
         let g = Lgraph::ll1(&grammar);
-        std::fs::File::create("tests/ll1.dot")
-            .unwrap()
-            .write_all(g.to_string().as_bytes())
-            .unwrap();
+        std::fs::write(format!("tests/ll1-{}.dot", name), g.to_string()).unwrap();
         t.init(g, grammar.clone());
         for (toks, tree) in grammar.possible_words().take(500) {
             let s = toks.iter().fold(String::new(), |mut acc, tok| {
@@ -256,7 +253,7 @@ E -> B | S | P | M;
 S -> B star;
 P -> B plus;
 M -> B question;
-B -> symbol | bs star | bs plus | bs bs | bs question | bs or | bs lp | bs rp | lp R rp;",
+B -> symbol | lp R rp;",
     )
     .unwrap()
 }
@@ -279,7 +276,7 @@ pub fn slr_gauntlet(t: &mut dyn TestParser) {
         (expr_grammar(), "expr_grammar"),
         (json_grammar(), "json_grammar"),
     ] {
-        let g = Lgraph::slr_with_lookahead(&grammar);
+        let g = Lgraph::slr(&grammar);
         std::fs::write(format!("tests/slr-{}.dot", name), g.to_string()).unwrap();
         t.init(g, grammar.clone());
         for (toks, tree) in grammar.possible_words().take(500) {
@@ -303,24 +300,4 @@ fn runtime_parser() {
     ll1_gauntlet(&mut RuntimeParser::default());
     println!("testing slr");
     slr_gauntlet(&mut RuntimeParser::default());
-}
-
-#[test]
-fn oops() {
-    let g = Lgraph::slr_with_lookahead(&expr_grammar());
-    std::fs::write("tests/slr.dot", g.to_string()).unwrap();
-    println!("{}", expr_grammar());
-    let mut p = RuntimeParser::default();
-    p.init(g, expr_grammar());
-    println!(
-        "{}",
-        p.parse(&[
-            Token::new("id"),
-            Token::new("mul"),
-            Token::new("id"),
-            Token::new("add"),
-            Token::new("id"),
-        ])
-        .unwrap()
-    )
 }
