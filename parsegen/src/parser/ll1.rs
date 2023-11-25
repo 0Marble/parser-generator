@@ -62,12 +62,16 @@ impl Lgraph {
         // start symbol
 
         let mut node_count = 0;
-        let mut bracket_count = grammar.non_terminals().count();
+        let terminal_count = grammar.terminals().count() + 1;
+        let prod_count = grammar.productions().count();
+        let terminal_bracket_offset = 0;
+        let prod_bracket_offset = terminal_count;
+        let mut bracket_count = prod_bracket_offset + prod_count;
         let mut look_aheads = vec![];
 
         // step 1: create starting and ending nodes for productions
         // and calculate look-aheads.
-        for (i, prod) in grammar.productions().enumerate() {
+        for (prod_idx, prod) in grammar.productions().enumerate() {
             let mut look_ahead = vec![];
             let mut had_eps = false;
             let first_alpha = first.first_of_sent(prod.rhs()).unwrap();
@@ -89,21 +93,37 @@ impl Lgraph {
             look_aheads.push(look_ahead.clone());
 
             ll1 = ll1.add_edge(
-                4 * i,
-                // Item::new(None, Some(look_ahead.clone()), Some(Bracket::new(i, true))),
-                Item::new(None, None, Some(Bracket::new(i, true))),
-                4 * i + 1,
-            );
-            ll1 = ll1.add_edge(
-                4 * i + 2,
+                4 * prod_idx,
                 Item::new(
                     None,
-                    // Some(follow.follow(prod.lhs()).unwrap().to_vec()),
                     None,
-                    Some(Bracket::new(i, false)),
+                    Some(Bracket::new(prod_idx + prod_bracket_offset, true)),
                 ),
-                4 * i + 3,
+                4 * prod_idx + 1,
             );
+            ll1 = ll1.add_edge(
+                4 * prod_idx + 2,
+                Item::new(
+                    None,
+                    None,
+                    Some(Bracket::new(prod_idx + prod_bracket_offset, false)),
+                ),
+                4 * prod_idx + 3,
+            );
+            ll1 = ll1
+                .set_node_label(
+                    4 * prod_idx,
+                    format!("{{{}|Start of {}[{}]}}", 4 * prod_idx, prod.lhs(), prod_idx),
+                )
+                .set_node_label(
+                    4 * prod_idx + 3,
+                    format!(
+                        "{{{}|End of {}[{}]}}",
+                        4 * prod_idx + 3,
+                        prod.lhs(),
+                        prod_idx
+                    ),
+                );
             node_count += 4;
         }
 
@@ -127,8 +147,22 @@ impl Lgraph {
                     node_count - 1
                 };
                 if grammar.is_terminal(t.clone()) {
-                    let item = Item::new(Some(TokenOrEnd::Token(t.clone())), None, None);
-                    ll1 = ll1.add_edge(source, item, target);
+                    let sym_id = grammar.terminal_index(t.clone()).unwrap();
+                    let item = Item::new(
+                        Some(TokenOrEnd::Token(t.clone())),
+                        None,
+                        Some(Bracket::new(sym_id + terminal_bracket_offset, true)),
+                    );
+                    ll1 = ll1.add_edge(source, item, node_count).add_edge(
+                        node_count,
+                        Item::new(
+                            None,
+                            None,
+                            Some(Bracket::new(sym_id + terminal_bracket_offset, false)),
+                        ),
+                        target,
+                    );
+                    node_count += 1;
                 } else {
                     for (prod2_idx, prod2) in grammar.productions().enumerate() {
                         if &prod2.lhs() != t {
@@ -176,6 +210,7 @@ impl Lgraph {
         // step 3: connect productions of the start symbol to the start and end
         let start_node = node_count;
         let end_node = node_count + 1;
+        node_count += 2;
         ll1 = ll1.add_start_node(start_node);
         ll1 = ll1.add_end_node(end_node);
         let start_symbol = grammar.start();
@@ -194,7 +229,33 @@ impl Lgraph {
                 Some(Bracket::new(bracket_count, false)),
             );
             ll1 = ll1.add_edge(start_node, start_item, 4 * i);
-            ll1 = ll1.add_edge(4 * i + 3, end_item, end_node);
+            ll1 = ll1
+                .add_edge(4 * i + 3, end_item, node_count)
+                .add_edge(
+                    node_count,
+                    Item::new(
+                        None,
+                        None,
+                        Some(Bracket::new(
+                            terminal_count - 1 + terminal_bracket_offset,
+                            true,
+                        )),
+                    ),
+                    node_count + 1,
+                )
+                .add_edge(
+                    node_count + 1,
+                    Item::new(
+                        None,
+                        None,
+                        Some(Bracket::new(
+                            terminal_count - 1 + terminal_bracket_offset,
+                            false,
+                        )),
+                    ),
+                    end_node,
+                );
+            node_count += 2;
         }
         ll1
     }

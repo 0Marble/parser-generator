@@ -39,6 +39,7 @@ impl TestParser for RuntimeParser {
         let w = &mut w;
         let g = self.g.as_ref().unwrap();
         let grammar = self.grammar.as_ref().unwrap();
+        let terminal_count = grammar.terminals().count() + 1;
 
         let mut state = g.start_nodes().next().unwrap();
         let mut stack = Stack::new();
@@ -59,7 +60,7 @@ impl TestParser for RuntimeParser {
             let mut next_state = Some(state);
             while let Some(s) = next_state.take() {
                 state = s;
-                print!("-> {s} -");
+                // print!("-> {s} -");
                 let mut has_consumed = false;
                 let mut bracket = None;
 
@@ -89,19 +90,28 @@ impl TestParser for RuntimeParser {
                     has_consumed = can_consume;
                 }
                 if has_consumed {
-                    print!("{cur_tok}");
+                    // print!("{cur_tok}");
                     need_to_consume = false;
-                    write!(w, "{}, ", cur_tok).unwrap();
+                    // write!(w, "{}, ", cur_tok).unwrap();
                     cur_tok = next_tok.take().unwrap();
                 }
                 if let Some(b) = bracket {
-                    print!("{}", b);
+                    // print!("{}", b);
                     if !b.is_open() {
                         let idx = stack.top().unwrap();
-                        grammar
-                            .productions()
-                            .nth(idx)
-                            .map(|p| write!(w, "{}[{idx}], ", p.lhs()));
+                        if idx < terminal_count {
+                            let t = grammar
+                                .terminals()
+                                .nth(idx)
+                                .map(TokenOrEnd::Token)
+                                .unwrap_or(TokenOrEnd::End);
+                            write!(w, "{t}, ").unwrap();
+                        } else {
+                            grammar
+                                .productions()
+                                .nth(idx - terminal_count)
+                                .map(|p| write!(w, "{}[{}], ", p.lhs(), idx - terminal_count));
+                        }
                     }
                     assert!(stack.try_accept_mut(b));
                 }
@@ -213,8 +223,15 @@ pub fn ll1_gauntlet(t: &mut dyn TestParser) {
         (non_slr_bu_ll1(), "non_slr_bu_ll1"),
         (json_grammar(), "json_grammar"),
     ] {
+        println!("\t{name}");
         let g = Lgraph::ll1(&grammar);
         std::fs::write(format!("tests/ll1-{}.dot", name), g.to_string()).unwrap();
+        assert_eq!(
+            g.is_deterministic(),
+            None,
+            "Non deterministic for {}",
+            grammar
+        );
         t.init(g, grammar.clone());
         for (toks, tree) in grammar.possible_words().take(500) {
             let s = toks.iter().fold(String::new(), |mut acc, tok| {
@@ -276,8 +293,15 @@ pub fn slr_gauntlet(t: &mut dyn TestParser) {
         (expr_grammar(), "expr_grammar"),
         (json_grammar(), "json_grammar"),
     ] {
+        println!("\t{name}");
         let g = Lgraph::slr(&grammar);
         std::fs::write(format!("tests/slr-{}.dot", name), g.to_string()).unwrap();
+        assert_eq!(
+            g.is_deterministic(),
+            None,
+            "Non deterministic for {}",
+            grammar
+        );
         t.init(g, grammar.clone());
         for (toks, tree) in grammar.possible_words().take(500) {
             let s = toks.iter().fold(String::new(), |mut acc, tok| {
@@ -287,7 +311,7 @@ pub fn slr_gauntlet(t: &mut dyn TestParser) {
             });
             assert_eq!(
                 t.parse(&toks),
-                Ok(tree),
+                Ok(tree.strip_suffix("$, ").unwrap().to_string()),
                 "failed on \n\tgrammar={grammar}\n\tinput={s}\n",
             );
         }

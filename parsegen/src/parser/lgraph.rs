@@ -39,6 +39,14 @@ impl Bracket {
             Bracket::Wildcard => None,
         }
     }
+
+    /// Returns `true` if the bracket is [`Wildcard`].
+    ///
+    /// [`Wildcard`]: Bracket::Wildcard
+    #[must_use]
+    pub fn is_wildcard(&self) -> bool {
+        matches!(self, Self::Wildcard)
+    }
 }
 
 #[derive(Debug, Default, Clone, PartialEq, Eq, Hash)]
@@ -69,6 +77,43 @@ impl Item {
     }
     pub fn look_ahead(&self) -> Option<&[TokenOrEnd]> {
         self.look_ahead.as_ref().map(|t| t.as_slice())
+    }
+
+    pub fn is_distinguishable(&self, other: &Self) -> bool {
+        let by_brackets = match (self.bracket(), other.bracket()) {
+            (None, None) => false,
+            (None, Some(b)) => !b.is_open(),
+            (Some(b), None) => !b.is_open(),
+            (Some(a), Some(b)) => {
+                !(a.is_open()
+                    || b.is_open()
+                    || a.index() == b.index()
+                    || a.is_wildcard()
+                    || b.is_wildcard())
+            }
+        };
+
+        let by_letters = match (
+            self.tok(),
+            self.look_ahead(),
+            other.tok(),
+            other.look_ahead(),
+        ) {
+            (Some(a), None, Some(b), None) => a != b,
+            (None, Some(la), None, Some(lb)) => la.iter().all(|la| !lb.contains(la)),
+            (None, Some(la), Some(b), None) => !la.contains(&b),
+            (None, Some(la), Some(b), Some(_)) => !la.contains(&b),
+            (Some(a), None, None, Some(lb)) => !lb.contains(&a),
+            (Some(a), None, Some(b), Some(_)) => a != b,
+            (Some(a), Some(_), None, Some(lb)) => !lb.contains(&a),
+            (Some(a), Some(_), Some(b), None) => a != b,
+            (Some(a), Some(la), Some(b), Some(lb)) => {
+                a != b && la.iter().all(|la| !lb.contains(la))
+            }
+            _ => false,
+        };
+
+        by_brackets || by_letters
     }
 }
 
@@ -185,6 +230,22 @@ impl Lgraph {
             self.node_labels.push((node, label.to_string()));
         }
         self
+    }
+
+    pub fn is_deterministic(&self) -> Option<usize> {
+        for node in self.nodes() {
+            let mut items: Vec<Item> = vec![];
+            for (_, item, _) in self.edges_from(node) {
+                for other_item in &items {
+                    if !other_item.is_distinguishable(&item) {
+                        return Some(node);
+                    }
+                }
+                items.push(item);
+            }
+        }
+
+        None
     }
 }
 

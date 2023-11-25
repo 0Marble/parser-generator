@@ -74,6 +74,44 @@ impl LR0Automata {
         }
     }
 
+    fn is_slr(&self) {
+        let first = self.grammar.first();
+        let follow = self.grammar.follow(&first);
+
+        for (state_idx, (_, kernel)) in self.states.iter().enumerate() {
+            let state = Self::closure(&self.grammar, kernel);
+
+            let mut shift_outs = vec![];
+            let mut reduce_outs = vec![];
+            for (prod_idx, spot) in state {
+                let prod = self.grammar.productions().nth(prod_idx).unwrap();
+                match prod.rhs().get(spot) {
+                    Some(sym) => {
+                        if shift_outs.contains(sym) {
+                            continue;
+                        }
+                        shift_outs.push(sym.clone());
+                    }
+                    None => {
+                        for sym in follow.follow(prod.lhs()).unwrap() {
+                            assert!(
+                                !reduce_outs.contains(sym),
+                                "Grammar not SLR: REDUCE/REDUCE conflict on {state_idx}, {sym}"
+                            );
+                            reduce_outs.push(sym.clone());
+                        }
+                    }
+                }
+            }
+
+            for reduce in reduce_outs {
+                assert!(
+                    !reduce.as_token().map_or(false, |t| shift_outs.contains(t)),
+                    "Grammar not SLR: SHIFT/REDUCE conflict on {state_idx}, {reduce}"
+                );
+            }
+        }
+    }
     fn closure(grammar: &Grammar, kernel: &[(usize, usize)]) -> Vec<(usize, usize)> {
         let mut full_state = kernel.to_vec();
         let mut changed = true;
@@ -176,6 +214,7 @@ impl Display for LR0Automata {
 impl Lgraph {
     pub fn slr(grammar: &Grammar) -> Self {
         let lr0 = LR0Automata::new(grammar);
+        lr0.is_slr();
         let first = lr0.grammar.first();
         let follow = lr0.grammar.follow(&first);
 
@@ -184,27 +223,33 @@ impl Lgraph {
         let end_node = lr0.states.len() + 1;
 
         let terminal_count = lr0.grammar.terminals().count() + 1;
+        let prod_count = lr0.grammar.productions().count();
+        let output_terminal_bracket_offset = 0;
+        let prod_bracket_offset = terminal_count;
+        let non_output_terminal_bracket_offset = prod_bracket_offset + prod_count;
+        let state_bracket_offset = non_output_terminal_bracket_offset + terminal_count;
+
         let dispatch_node_offset = lr0.states.len() + 2;
         let prod_node_offset = dispatch_node_offset + terminal_count;
-        let mut path_node = prod_node_offset + lr0.grammar.productions().count() * terminal_count;
-        let termianl_bracket_offset = lr0.grammar.non_terminals().count();
-        let state_bracket_offset = termianl_bracket_offset + terminal_count;
+        let mut path_node = prod_node_offset + prod_count * terminal_count;
 
         for (from, sym, to) in lr0.goto.iter().cloned() {
             if !lr0.grammar.is_terminal(sym.clone()) {
                 continue;
             }
 
+            let sym_idx = lr0.grammar.terminal_index(sym.clone()).unwrap();
             if !lr0.grammar.is_terminal(lr0.states[from].0.clone()) {
-                let sym_idx = lr0.grammar.terminal_index(sym.clone()).unwrap();
-
                 slr = slr
                     .add_edge(
                         from,
                         Item::new(
                             None,
                             None,
-                            Some(Bracket::new(sym_idx + termianl_bracket_offset, false)),
+                            Some(Bracket::new(
+                                sym_idx + non_output_terminal_bracket_offset,
+                                false,
+                            )),
                         ),
                         path_node,
                     )
@@ -213,21 +258,73 @@ impl Lgraph {
                         Item::new(
                             None,
                             None,
+                            Some(Bracket::new(sym_idx + output_terminal_bracket_offset, true)),
+                        ),
+                        path_node + 1,
+                    )
+                    .add_edge(
+                        path_node + 1,
+                        Item::new(
+                            None,
+                            None,
+                            Some(Bracket::new(
+                                sym_idx + output_terminal_bracket_offset,
+                                false,
+                            )),
+                        ),
+                        path_node + 2,
+                    )
+                    .add_edge(
+                        path_node + 2,
+                        Item::new(
+                            None,
+                            None,
                             Some(Bracket::new(to + state_bracket_offset, true)),
                         ),
                         to,
                     );
-                path_node += 1;
-            } else {
-                slr = slr.add_edge(
-                    from,
-                    Item::new(
-                        Some(TokenOrEnd::Token(sym)),
-                        None,
-                        Some(Bracket::new(to + state_bracket_offset, true)),
-                    ),
-                    to,
+                slr = slr.set_node_label(
+                    path_node + 1,
+                    format!("{{{}|{} consumed}}", path_node + 1, sym),
                 );
+                path_node += 3;
+            } else {
+                slr = slr
+                    .add_edge(
+                        from,
+                        Item::new(
+                            Some(TokenOrEnd::Token(sym.clone())),
+                            None,
+                            Some(Bracket::new(to + state_bracket_offset, true)),
+                        ),
+                        path_node,
+                    )
+                    .add_edge(
+                        path_node,
+                        Item::new(
+                            None,
+                            None,
+                            Some(Bracket::new(sym_idx + output_terminal_bracket_offset, true)),
+                        ),
+                        path_node + 1,
+                    )
+                    .add_edge(
+                        path_node + 1,
+                        Item::new(
+                            None,
+                            None,
+                            Some(Bracket::new(
+                                sym_idx + output_terminal_bracket_offset,
+                                false,
+                            )),
+                        ),
+                        to,
+                    );
+                slr = slr.set_node_label(
+                    path_node + 1,
+                    format!("{{{}|{} consumed}}", path_node + 1, sym),
+                );
+                path_node += 2;
             }
         }
 
@@ -269,7 +366,10 @@ impl Lgraph {
                             Item::new(
                                 None,
                                 None,
-                                Some(Bracket::new(sym_id + termianl_bracket_offset, false)),
+                                Some(Bracket::new(
+                                    sym_id + non_output_terminal_bracket_offset,
+                                    false,
+                                )),
                             ),
                             prod_node,
                         )
@@ -287,11 +387,11 @@ impl Lgraph {
                         }
 
                         let brackets = [
-                            Bracket::new(prod_idx, false),
+                            Bracket::new(prod_idx + prod_bracket_offset, false),
                             Bracket::new(from + state_bracket_offset, false),
                             Bracket::new(from + state_bracket_offset, true),
                             Bracket::new(to + state_bracket_offset, true),
-                            Bracket::new(sym_id + termianl_bracket_offset, true),
+                            Bracket::new(sym_id + non_output_terminal_bracket_offset, true),
                         ];
 
                         let mut prev = dispatch_node;
@@ -341,7 +441,11 @@ impl Lgraph {
             if prod.rhs().len() == 0 {
                 slr = slr.add_edge(
                     prod_node,
-                    Item::new(None, None, Some(Bracket::new(prod_idx, true))),
+                    Item::new(
+                        None,
+                        None,
+                        Some(Bracket::new(prod_idx + prod_bracket_offset, true)),
+                    ),
                     dispatch_node,
                 );
             } else {
@@ -363,7 +467,11 @@ impl Lgraph {
 
                 slr = slr.add_edge(
                     path_node - 1,
-                    Item::new(None, None, Some(Bracket::new(prod_idx, true))),
+                    Item::new(
+                        None,
+                        None,
+                        Some(Bracket::new(prod_idx + prod_bracket_offset, true)),
+                    ),
                     dispatch_node,
                 );
             }
@@ -399,7 +507,10 @@ impl Lgraph {
                 Item::new(
                     Some(sym),
                     None,
-                    Some(Bracket::new(sym_id + termianl_bracket_offset, true)),
+                    Some(Bracket::new(
+                        sym_id + non_output_terminal_bracket_offset,
+                        true,
+                    )),
                 ),
                 start_state,
             );
@@ -414,7 +525,11 @@ impl Lgraph {
             )
             .add_edge(
                 dispatch_node_offset + lr0.grammar.terminals().count(),
-                Item::new(None, None, Some(Bracket::new(start_prod_idx, false))),
+                Item::new(
+                    None,
+                    None,
+                    Some(Bracket::new(start_prod_idx + prod_bracket_offset, false)),
+                ),
                 end_node,
             )
             .add_edge(
