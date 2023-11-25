@@ -1,5 +1,8 @@
 use super::{grammar::Grammar, lgraph::Lgraph};
-use crate::parser::lgraph::{Bracket, Item};
+use crate::parser::{
+    grammar::{TokenOrEnd, TokenOrEps},
+    lgraph::{Bracket, Item},
+};
 
 impl Lgraph {
     pub fn ll1(grammar: &Grammar) -> Self {
@@ -13,30 +16,32 @@ impl Lgraph {
             //    and wise-wersa
             for (i, alpha_prod) in grammar.productions_for(nt.clone()).enumerate() {
                 for beta_prod in grammar.productions_for(nt.clone()).skip(i + 1) {
-                    let alpha_first = match alpha_prod.rhs().first() {
-                        None => &[None],
-                        Some(t) => first.first(t.clone()).unwrap(),
-                    };
-                    let beta_first = match beta_prod.rhs().first() {
-                        None => &[None],
-                        Some(t) => first.first(t.clone()).unwrap(),
-                    };
+                    let alpha_first = first.first_of_sent(alpha_prod.rhs()).unwrap();
+                    let beta_first = first.first_of_sent(beta_prod.rhs()).unwrap();
 
                     assert!(
-                        alpha_first.iter().all(|a| !beta_first.contains(a)),
+                        alpha_first
+                            .iter()
+                            .all(|a| !beta_first.contains(a) || a.is_eps()),
                         "Grammar not LL1: FIRST set conflict on {alpha_prod} and {beta_prod}"
                     );
 
                     let a_follow = follow.follow(nt.clone()).unwrap();
-                    if alpha_first.contains(&None) {
+                    if alpha_first.contains(&TokenOrEps::Eps) {
                         assert!(
-                        beta_first.iter().all(|a| !a_follow.contains(a)),
-                        "Grammar not LL1: FIRST and FOLLOW conflict on {alpha_prod} and {beta_prod}"
-                    );
-                    } else if beta_first.contains(&None) {
+                            beta_first
+                                .iter()
+                                .all(|a| a.as_token().map_or(false, |a| !a_follow
+                                    .contains(&TokenOrEnd::Token(a.clone())))),
+                            "Grammar not LL1: FIRST and FOLLOW conflict on {alpha_prod} and {beta_prod}"
+                        );
+                    } else if beta_first.contains(&TokenOrEps::Eps) {
                         assert!(
-                            alpha_first.iter().all(|a| !a_follow.contains(a)),
-                        "Grammar not LL1: FIRST and FOLLOW conflict on {alpha_prod} and {beta_prod}"
+                            alpha_first
+                                .iter()
+                                .all(|a| a.as_token().map_or(false, |a| !a_follow
+                                    .contains(&TokenOrEnd::Token(a.clone())))),
+                            "Grammar not LL1: FIRST and FOLLOW conflict on {alpha_prod} and {beta_prod}"
                         );
                     }
                 }
@@ -57,18 +62,22 @@ impl Lgraph {
         // start symbol
 
         let mut node_count = 0;
-        let mut bracket_count = grammar.non_terminals().count();
+        let terminal_count = grammar.terminals().count() + 1;
+        let prod_count = grammar.productions().count();
+        let terminal_bracket_offset = 0;
+        let prod_bracket_offset = terminal_count;
+        let mut bracket_count = prod_bracket_offset + prod_count;
         let mut look_aheads = vec![];
 
         // step 1: create starting and ending nodes for productions
         // and calculate look-aheads.
-        for (i, prod) in grammar.productions().enumerate() {
+        for (prod_idx, prod) in grammar.productions().enumerate() {
             let mut look_ahead = vec![];
             let mut had_eps = false;
             let first_alpha = first.first_of_sent(prod.rhs()).unwrap();
             for t in first_alpha {
-                if t.is_some() {
-                    look_ahead.push(t.clone());
+                if let TokenOrEps::Token(t) = t {
+                    look_ahead.push(TokenOrEnd::Token(t.clone()));
                 } else {
                     had_eps = true;
                 }
@@ -84,21 +93,37 @@ impl Lgraph {
             look_aheads.push(look_ahead.clone());
 
             ll1 = ll1.add_edge(
-                4 * i,
-                // Item::new(None, Some(look_ahead.clone()), Some(Bracket::new(i, true))),
-                Item::new(None, None, Some(Bracket::new(i, true))),
-                4 * i + 1,
-            );
-            ll1 = ll1.add_edge(
-                4 * i + 2,
+                4 * prod_idx,
                 Item::new(
                     None,
-                    // Some(follow.follow(prod.lhs()).unwrap().to_vec()),
                     None,
-                    Some(Bracket::new(i, false)),
+                    Some(Bracket::new(prod_idx + prod_bracket_offset, true)),
                 ),
-                4 * i + 3,
+                4 * prod_idx + 1,
             );
+            ll1 = ll1.add_edge(
+                4 * prod_idx + 2,
+                Item::new(
+                    None,
+                    None,
+                    Some(Bracket::new(prod_idx + prod_bracket_offset, false)),
+                ),
+                4 * prod_idx + 3,
+            );
+            ll1 = ll1
+                .set_node_label(
+                    4 * prod_idx,
+                    format!("{{{}|Start of {}[{}]}}", 4 * prod_idx, prod.lhs(), prod_idx),
+                )
+                .set_node_label(
+                    4 * prod_idx + 3,
+                    format!(
+                        "{{{}|End of {}[{}]}}",
+                        4 * prod_idx + 3,
+                        prod.lhs(),
+                        prod_idx
+                    ),
+                );
             node_count += 4;
         }
 
@@ -122,8 +147,22 @@ impl Lgraph {
                     node_count - 1
                 };
                 if grammar.is_terminal(t.clone()) {
-                    let item = Item::new(Some(t.clone()), None, None);
-                    ll1 = ll1.add_edge(source, item, target);
+                    let sym_id = grammar.terminal_index(t.clone()).unwrap();
+                    let item = Item::new(
+                        Some(TokenOrEnd::Token(t.clone())),
+                        None,
+                        Some(Bracket::new(sym_id + terminal_bracket_offset, true)),
+                    );
+                    ll1 = ll1.add_edge(source, item, node_count).add_edge(
+                        node_count,
+                        Item::new(
+                            None,
+                            None,
+                            Some(Bracket::new(sym_id + terminal_bracket_offset, false)),
+                        ),
+                        target,
+                    );
+                    node_count += 1;
                 } else {
                     for (prod2_idx, prod2) in grammar.productions().enumerate() {
                         if &prod2.lhs() != t {
@@ -140,8 +179,8 @@ impl Lgraph {
                         let mut following = vec![];
                         let mut had_eps = false;
                         for t in first_beta {
-                            if t.is_some() {
-                                following.push(t);
+                            if let Some(t) = t.as_token() {
+                                following.push(TokenOrEnd::Token(t.clone()));
                             } else {
                                 had_eps = true;
                             }
@@ -171,6 +210,7 @@ impl Lgraph {
         // step 3: connect productions of the start symbol to the start and end
         let start_node = node_count;
         let end_node = node_count + 1;
+        node_count += 2;
         ll1 = ll1.add_start_node(start_node);
         ll1 = ll1.add_end_node(end_node);
         let start_symbol = grammar.start();
@@ -184,12 +224,38 @@ impl Lgraph {
                 Some(Bracket::new(bracket_count, true)),
             );
             let end_item = Item::new(
+                Some(TokenOrEnd::End),
                 None,
-                Some(vec![None]),
                 Some(Bracket::new(bracket_count, false)),
             );
             ll1 = ll1.add_edge(start_node, start_item, 4 * i);
-            ll1 = ll1.add_edge(4 * i + 3, end_item, end_node);
+            ll1 = ll1
+                .add_edge(4 * i + 3, end_item, node_count)
+                .add_edge(
+                    node_count,
+                    Item::new(
+                        None,
+                        None,
+                        Some(Bracket::new(
+                            terminal_count - 1 + terminal_bracket_offset,
+                            true,
+                        )),
+                    ),
+                    node_count + 1,
+                )
+                .add_edge(
+                    node_count + 1,
+                    Item::new(
+                        None,
+                        None,
+                        Some(Bracket::new(
+                            terminal_count - 1 + terminal_bracket_offset,
+                            false,
+                        )),
+                    ),
+                    end_node,
+                );
+            node_count += 2;
         }
         ll1
     }
