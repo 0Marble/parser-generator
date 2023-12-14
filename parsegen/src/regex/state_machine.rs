@@ -2,10 +2,10 @@ use std::{any::type_name, collections::HashSet, fmt::Display, io::Cursor, io::Wr
 
 #[derive(Debug, Default, Clone, PartialEq)]
 pub struct StateMachine<T> {
-    edges: Vec<(usize, T, usize)>,
+    edges: Vec<Vec<(T, usize)>>,
     start: Vec<usize>,
     end: Vec<usize>,
-    nodes: Vec<usize>,
+    nodes: Vec<(usize, usize)>,
 }
 
 impl<T> StateMachine<T>
@@ -22,39 +22,62 @@ where
     }
     pub fn add_start_node(mut self, n: usize) -> Self {
         self.start.push(n);
-        if !self.nodes.contains(&n) {
-            self.nodes.push(n);
+        if self.nodes.iter().all(|(node, _)| node != &n) {
+            self.nodes.push((n, self.edges.len()));
+            self.edges.push(vec![]);
         }
         self
     }
     pub fn add_end_node(mut self, n: usize) -> Self {
         self.end.push(n);
-        if !self.nodes.contains(&n) {
-            self.nodes.push(n);
+        if self.nodes.iter().all(|(node, _)| node != &n) {
+            self.nodes.push((n, self.edges.len()));
+            self.edges.push(vec![]);
         }
         self
     }
+    fn edges_loc(&self, node: usize) -> usize {
+        for (n, loc) in &self.nodes {
+            if *n == node {
+                return *loc;
+            }
+        }
+        panic!("Node {node} not in graph")
+    }
+    fn from_node(&self, edge_loc: usize) -> usize {
+        for (n, loc) in &self.nodes {
+            if *loc == edge_loc {
+                return *n;
+            }
+        }
+        panic!("Node with egde location {edge_loc} not in graph")
+    }
     pub fn add_edge(mut self, from: usize, letter: T, to: usize) -> Self {
-        self.edges.push((from, letter, to));
-        if !self.nodes.contains(&from) {
-            self.nodes.push(from);
-        }
-        if !self.nodes.contains(&to) {
-            self.nodes.push(to);
-        }
+        self = self.add_node(from);
+        self = self.add_node(to);
+        let edges_loc = self.edges_loc(from);
+        self.edges[edges_loc].push((letter, to));
         self
     }
     pub fn edges(&self) -> impl Iterator<Item = (usize, T, usize)> + '_ {
-        self.edges.iter().cloned()
+        self.edges.iter().enumerate().flat_map(|(loc, edges)| {
+            let from = self.from_node(loc);
+            edges
+                .iter()
+                .map(move |(item, to)| (from, item.clone(), *to))
+        })
     }
     pub fn edges_from(&self, n: usize) -> impl Iterator<Item = (usize, T, usize)> + '_ {
-        self.edges().filter(move |(from, _, _)| *from == n)
+        let loc = self.edges_loc(n);
+        self.edges[loc]
+            .iter()
+            .map(move |(item, to)| (n, item.clone(), *to))
     }
     pub fn is_end_node(&self, n: usize) -> bool {
         self.end.contains(&n)
     }
     pub fn nodes(&self) -> impl Iterator<Item = usize> + '_ {
-        self.nodes.iter().cloned()
+        self.nodes.iter().map(|(node, _)| *node)
     }
     pub fn start_nodes(&self) -> impl Iterator<Item = usize> + '_ {
         self.start.iter().cloned()
@@ -64,8 +87,9 @@ where
     }
 
     pub fn add_node(mut self, n: usize) -> Self {
-        if !self.nodes.contains(&n) {
-            self.nodes.push(n);
+        if self.nodes.iter().all(|(node, _)| node != &n) {
+            self.nodes.push((n, self.edges.len()));
+            self.edges.push(vec![]);
         }
 
         self
