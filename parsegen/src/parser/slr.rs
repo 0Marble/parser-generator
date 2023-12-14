@@ -3,7 +3,7 @@ use std::{fmt::Display, io::Cursor};
 use crate::{parser::grammar::Production, tokenizer::Token};
 
 use super::{
-    grammar::{Grammar, TokenOrEnd},
+    grammar::{Grammar, Node, TokenOrEnd},
     lgraph::{Bracket, Item, Lgraph},
 };
 
@@ -259,10 +259,12 @@ impl Lgraph {
                     )
                     .add_edge(
                         path_node + 1,
-                        Item::default().with_bracket(Some(Bracket::new(
-                            sym_idx + output_terminal_bracket_offset,
-                            false,
-                        ))),
+                        Item::default()
+                            .with_bracket(Some(Bracket::new(
+                                sym_idx + output_terminal_bracket_offset,
+                                false,
+                            )))
+                            .with_output(Some(Node::Leaf(sym.clone()))),
                         path_node + 2,
                     )
                     .add_edge(
@@ -295,10 +297,12 @@ impl Lgraph {
                     )
                     .add_edge(
                         path_node + 1,
-                        Item::default().with_bracket(Some(Bracket::new(
-                            sym_idx + output_terminal_bracket_offset,
-                            false,
-                        ))),
+                        Item::default()
+                            .with_bracket(Some(Bracket::new(
+                                sym_idx + output_terminal_bracket_offset,
+                                false,
+                            )))
+                            .with_output(Some(Node::Leaf(sym.clone()))),
                         to,
                     );
                 slr = slr.set_node_label(
@@ -370,10 +374,14 @@ impl Lgraph {
                             Bracket::new(to + state_bracket_offset, true),
                             Bracket::new(sym_id + non_output_terminal_bracket_offset, true),
                         ];
+                        let outputs = [Some(Node::RuleEnd(prod_idx, prod.lhs()))];
 
                         let mut prev = dispatch_node;
                         for i in 0..brackets.len() {
-                            let item = Item::default().with_bracket(Some(brackets[i]));
+                            let output = outputs.get(i).cloned().unwrap_or(None);
+                            let item = Item::default()
+                                .with_bracket(Some(brackets[i]))
+                                .with_output(output);
                             let next = if let Some((_, _, old)) =
                                 slr.edges().find(|(from, i, _)| from == &prev && i == &item)
                             {

@@ -294,6 +294,11 @@ impl Display for Lgraph {
                 write!(w2, "token=\"{}\", ", tok).unwrap();
                 write!(w1, "{}\\n", tok).unwrap();
             }
+            if let Some(out) = l.output() {
+                write!(w2, "output=\"{}\", ", out).unwrap();
+                write!(w1, "<{}>\\n", out).unwrap();
+            }
+
             if let Some(bracket) = l.bracket() {
                 let idx = bracket
                     .index()

@@ -348,6 +348,16 @@ pub enum Node {
     RuleEnd(usize, Token),
 }
 
+impl Display for Node {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Node::Leaf(l) => write!(f, "{l}"),
+            Node::RuleStart(i, l) => write!(f, "S{l}[{i}]"),
+            Node::RuleEnd(i, l) => write!(f, "E{l}[{i}]"),
+        }
+    }
+}
+
 impl Node {
     /// Returns `true` if the node is [`Leaf`].
     ///
