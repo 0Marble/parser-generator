@@ -239,7 +239,6 @@ pub fn ll1_gauntlet(t: &mut dyn TestParser) {
                 acc
             });
             let path = t.parse(&toks).unwrap();
-            println!("{}", path);
             let res = path.to_parse_tree(&grammar);
             assert_eq!(res, tree, "\tgrammar: {grammar}\n\ttoks: {s}");
         }
@@ -321,16 +320,17 @@ pub fn slr_gauntlet(t: &mut dyn TestParser) {
                 acc += " ";
                 acc
             });
-            let res = t.parse(&toks).map(|p| p.to_parse_tree(&grammar));
-            assert_eq!(res, Ok(tree), "\tgrammar: {grammar}\n\ttoks: {s}");
+            let path = t.parse(&toks).unwrap();
+            let res = path.to_parse_tree(&grammar);
+            assert_eq!(res, tree, "\tgrammar: {grammar}\n\ttoks: {s}");
         }
     }
 }
 
 #[test]
 fn runtime_parser() {
-    writeln!(std::io::stderr(), "testing ll1").unwrap();
+    println!("testing ll1");
     ll1_gauntlet(&mut RuntimeParser::default());
-    writeln!(std::io::stderr(), "testing slr").unwrap();
+    println!("testing slr");
     slr_gauntlet(&mut RuntimeParser::default());
 }

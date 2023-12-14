@@ -1,4 +1,7 @@
-use super::{grammar::Grammar, lgraph::Lgraph};
+use super::{
+    grammar::{Grammar, Node},
+    lgraph::Lgraph,
+};
 use crate::parser::{
     grammar::{TokenOrEnd, TokenOrEps},
     lgraph::{Bracket, Item},
@@ -64,7 +67,6 @@ impl Lgraph {
         let mut node_count = 0;
         let terminal_count = grammar.terminals().count() + 1;
         let prod_count = grammar.productions().count();
-        let terminal_bracket_offset = 0;
         let prod_bracket_offset = terminal_count;
         let mut bracket_count = prod_bracket_offset + prod_count;
         let mut look_aheads = vec![];
@@ -95,13 +97,15 @@ impl Lgraph {
             ll1 = ll1.add_edge(
                 4 * prod_idx,
                 Item::default()
-                    .with_bracket(Some(Bracket::new(prod_idx + prod_bracket_offset, true))),
+                    .with_bracket(Some(Bracket::new(prod_idx + prod_bracket_offset, true)))
+                    .with_output(Some(Node::RuleStart(prod_idx, prod.lhs()))),
                 4 * prod_idx + 1,
             );
             ll1 = ll1.add_edge(
                 4 * prod_idx + 2,
                 Item::default()
-                    .with_bracket(Some(Bracket::new(prod_idx + prod_bracket_offset, false))),
+                    .with_bracket(Some(Bracket::new(prod_idx + prod_bracket_offset, false)))
+                    .with_output(Some(Node::RuleEnd(prod_idx, prod.lhs()))),
                 4 * prod_idx + 3,
             );
             ll1 = ll1
@@ -137,19 +141,10 @@ impl Lgraph {
                     node_count - 1
                 };
                 if grammar.is_terminal(t.clone()) {
-                    let sym_id = grammar.terminal_index(t.clone()).unwrap();
                     let item = Item::default()
                         .with_token(Some(TokenOrEnd::Token(t.clone())))
-                        .with_bracket(Some(Bracket::new(sym_id + terminal_bracket_offset, true)));
-                    ll1 = ll1.add_edge(source, item, node_count).add_edge(
-                        node_count,
-                        Item::default().with_bracket(Some(Bracket::new(
-                            sym_id + terminal_bracket_offset,
-                            false,
-                        ))),
-                        target,
-                    );
-                    node_count += 1;
+                        .with_output(Some(Node::Leaf(t.clone())));
+                    ll1 = ll1.add_edge(source, item, target)
                 } else {
                     for (prod2_idx, prod2) in grammar.productions().enumerate() {
                         if &prod2.lhs() != t {
@@ -209,25 +204,12 @@ impl Lgraph {
                 .with_bracket(Some(Bracket::new(bracket_count, false)));
 
             ll1 = ll1.add_edge(start_node, start_item, 4 * i);
-            ll1 = ll1
-                .add_edge(4 * i + 3, end_item, node_count)
-                .add_edge(
-                    node_count,
-                    Item::default().with_bracket(Some(Bracket::new(
-                        terminal_count - 1 + terminal_bracket_offset,
-                        true,
-                    ))),
-                    node_count + 1,
-                )
-                .add_edge(
-                    node_count + 1,
-                    Item::default().with_bracket(Some(Bracket::new(
-                        terminal_count - 1 + terminal_bracket_offset,
-                        false,
-                    ))),
-                    end_node,
-                );
-            node_count += 2;
+            ll1 = ll1.add_edge(4 * i + 3, end_item, node_count).add_edge(
+                node_count,
+                Item::default(),
+                end_node,
+            );
+            node_count += 1;
         }
         ll1
     }

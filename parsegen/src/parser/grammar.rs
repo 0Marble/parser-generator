@@ -1,10 +1,4 @@
-use std::{
-    collections::{LinkedList, VecDeque},
-    fmt::Display,
-    io::Cursor,
-    io::Write,
-    str::FromStr,
-};
+use std::{collections::VecDeque, fmt::Display, io::Cursor, io::Write, str::FromStr};
 
 use crate::tokenizer::Token;
 
@@ -350,8 +344,8 @@ impl<'a> PossibleWords<'a> {
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum Node {
     Leaf(Token),
-    RuleStart(usize),
-    RuleEnd(usize),
+    RuleStart(usize, Token),
+    RuleEnd(usize, Token),
 }
 
 impl Node {
@@ -385,6 +379,26 @@ pub struct ParseTree {
     nodes: VecDeque<Node>,
 }
 
+impl Display for ParseTree {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut depth = 0;
+        for (_, node) in self.nodes() {
+            match node {
+                Node::Leaf(l) => writeln!(f, "{}-{}", " |".repeat(depth), l)?,
+                Node::RuleStart(i, n) => {
+                    writeln!(f, "{}-{n}[{i}]", " |".repeat(depth))?;
+                    depth += 1;
+                }
+                Node::RuleEnd(_, _) => {
+                    depth -= 1;
+                }
+            }
+        }
+
+        Ok(())
+    }
+}
+
 impl ParseTree {
     pub fn new(start: Token) -> Self {
         Self {
@@ -392,6 +406,13 @@ impl ParseTree {
         }
     }
 
+    pub fn root(&self) -> Token {
+        match &self.nodes[0] {
+            Node::Leaf(n) => n.clone(),
+            Node::RuleStart(_, n) => n.clone(),
+            _ => unreachable!(),
+        }
+    }
     pub fn nodes(&self) -> impl Iterator<Item = (usize, Node)> + '_ {
         self.nodes.iter().cloned().enumerate()
     }
@@ -402,7 +423,13 @@ impl ParseTree {
 
     pub fn replace_with_subtree(&mut self, node_idx: usize, mut sub_tree: Self) {
         let mut right = self.nodes.split_off(node_idx);
-        assert!(right.pop_front().is_some());
+
+        assert_eq!(
+            right.pop_front().unwrap(),
+            Node::Leaf(sub_tree.root()),
+            "replacing node {node_idx}"
+        );
+
         self.nodes.append(&mut sub_tree.nodes);
         self.nodes.append(&mut right);
     }
@@ -413,35 +440,12 @@ impl ParseTree {
             .pop_front()
             .and_then(|n| n.as_leaf().cloned())
             .map_or(false, |t| prod.lhs() == t));
-        self.nodes.push_back(Node::RuleStart(prod_idx));
+        self.nodes.push_back(Node::RuleStart(prod_idx, prod.lhs()));
         for t in prod.rhs() {
             self.nodes.push_back(Node::Leaf(t.clone()));
         }
-        self.nodes.push_back(Node::RuleEnd(prod_idx));
+        self.nodes.push_back(Node::RuleEnd(prod_idx, prod.lhs()));
         self.nodes.append(&mut right);
-    }
-
-    pub fn to_string(&self, g: &Grammar) -> String {
-        let mut derivation: Vec<u8> = vec![];
-        let mut w = Cursor::new(&mut derivation);
-        let w = &mut w;
-
-        for node in &self.nodes {
-            match node {
-                Node::Leaf(tok) => {
-                    write!(w, "{tok}, ").unwrap();
-                }
-                Node::RuleEnd(prod_idx) => write!(
-                    w,
-                    "{}[{prod_idx}], ",
-                    g.productions().nth(*prod_idx).unwrap().lhs()
-                )
-                .unwrap(),
-                _ => (),
-            }
-        }
-
-        String::from_utf8(derivation).unwrap()
     }
 }
 
@@ -633,7 +637,7 @@ impl First {
 }
 
 impl Grammar {
-    pub fn parse(&self, word: &[Token]) -> Option<String> {
+    pub fn parse(&self, word: &[Token]) -> Option<ParseTree> {
         let first = self.first();
         let follow = self.follow(&first);
         let mut stack = vec![];
@@ -709,7 +713,7 @@ impl Grammar {
                 }
 
                 if !had_nonterms {
-                    return Some(tree.to_string(self));
+                    return Some(tree);
                 }
             }
         }

@@ -425,15 +425,15 @@ impl Path {
         for n in self.postfix_output() {
             match n {
                 Node::Leaf(t) => stack.push(ParseTree::new(t)),
-                Node::RuleEnd(prod_idx) => {
+                Node::RuleEnd(prod_idx, _) => {
                     let prod = g.productions().nth(prod_idx).unwrap();
                     let mut parent = ParseTree::new(prod.lhs());
                     parent.replace_with_production(0, prod, prod_idx);
 
                     let body = stack.split_off(stack.len() - prod.rhs().len());
                     assert_eq!(body.len(), prod.rhs().len());
-                    for (i, child) in body.into_iter().enumerate() {
-                        parent.replace_with_subtree(i, child);
+                    for (i, child) in body.into_iter().enumerate().rev() {
+                        parent.replace_with_subtree(i + 1, child);
                     }
                     stack.push(parent);
                 }
