@@ -243,44 +243,32 @@ impl Lgraph {
                 slr = slr
                     .add_edge(
                         from,
-                        Item::new(
-                            None,
-                            None,
-                            Some(Bracket::new(
-                                sym_idx + non_output_terminal_bracket_offset,
-                                false,
-                            )),
-                        ),
+                        Item::default().with_bracket(Some(Bracket::new(
+                            sym_idx + non_output_terminal_bracket_offset,
+                            false,
+                        ))),
                         path_node,
                     )
                     .add_edge(
                         path_node,
-                        Item::new(
-                            None,
-                            None,
-                            Some(Bracket::new(sym_idx + output_terminal_bracket_offset, true)),
-                        ),
+                        Item::default().with_bracket(Some(Bracket::new(
+                            sym_idx + output_terminal_bracket_offset,
+                            true,
+                        ))),
                         path_node + 1,
                     )
                     .add_edge(
                         path_node + 1,
-                        Item::new(
-                            None,
-                            None,
-                            Some(Bracket::new(
-                                sym_idx + output_terminal_bracket_offset,
-                                false,
-                            )),
-                        ),
+                        Item::default().with_bracket(Some(Bracket::new(
+                            sym_idx + output_terminal_bracket_offset,
+                            false,
+                        ))),
                         path_node + 2,
                     )
                     .add_edge(
                         path_node + 2,
-                        Item::new(
-                            None,
-                            None,
-                            Some(Bracket::new(to + state_bracket_offset, true)),
-                        ),
+                        Item::default()
+                            .with_bracket(Some(Bracket::new(to + state_bracket_offset, true))),
                         to,
                     );
                 slr = slr.set_node_label(
@@ -292,32 +280,25 @@ impl Lgraph {
                 slr = slr
                     .add_edge(
                         from,
-                        Item::new(
-                            Some(TokenOrEnd::Token(sym.clone())),
-                            None,
-                            Some(Bracket::new(to + state_bracket_offset, true)),
-                        ),
+                        Item::default()
+                            .with_token(Some(TokenOrEnd::Token(sym.clone())))
+                            .with_bracket(Some(Bracket::new(to + state_bracket_offset, true))),
                         path_node,
                     )
                     .add_edge(
                         path_node,
-                        Item::new(
-                            None,
-                            None,
-                            Some(Bracket::new(sym_idx + output_terminal_bracket_offset, true)),
-                        ),
+                        Item::default().with_bracket(Some(Bracket::new(
+                            sym_idx + output_terminal_bracket_offset,
+                            true,
+                        ))),
                         path_node + 1,
                     )
                     .add_edge(
                         path_node + 1,
-                        Item::new(
-                            None,
-                            None,
-                            Some(Bracket::new(
-                                sym_idx + output_terminal_bracket_offset,
-                                false,
-                            )),
-                        ),
+                        Item::default().with_bracket(Some(Bracket::new(
+                            sym_idx + output_terminal_bracket_offset,
+                            false,
+                        ))),
                         to,
                     );
                 slr = slr.set_node_label(
@@ -363,20 +344,16 @@ impl Lgraph {
                     if !lr0.grammar.is_terminal(kernel_symbol.clone()) {
                         slr = slr.add_edge(
                             state_idx,
-                            Item::new(
-                                None,
-                                None,
-                                Some(Bracket::new(
-                                    sym_id + non_output_terminal_bracket_offset,
-                                    false,
-                                )),
-                            ),
+                            Item::default().with_bracket(Some(Bracket::new(
+                                sym_id + non_output_terminal_bracket_offset,
+                                false,
+                            ))),
                             prod_node,
                         )
                     } else {
                         slr = slr.add_edge(
                             state_idx,
-                            Item::new(Some(sym.clone()), None, None),
+                            Item::default().with_token(Some(sym.clone())),
                             prod_node,
                         );
                     }
@@ -396,7 +373,7 @@ impl Lgraph {
 
                         let mut prev = dispatch_node;
                         for i in 0..brackets.len() {
-                            let item = Item::new(None, None, Some(brackets[i]));
+                            let item = Item::default().with_bracket(Some(brackets[i]));
                             let next = if let Some((_, _, old)) =
                                 slr.edges().find(|(from, i, _)| from == &prev && i == &item)
                             {
@@ -441,17 +418,14 @@ impl Lgraph {
             if prod.rhs().len() == 0 {
                 slr = slr.add_edge(
                     prod_node,
-                    Item::new(
-                        None,
-                        None,
-                        Some(Bracket::new(prod_idx + prod_bracket_offset, true)),
-                    ),
+                    Item::default()
+                        .with_bracket(Some(Bracket::new(prod_idx + prod_bracket_offset, true))),
                     dispatch_node,
                 );
             } else {
                 slr = slr.add_edge(
                     prod_node,
-                    Item::new(None, None, Some(Bracket::Wildcard)),
+                    Item::default().with_bracket(Some(Bracket::Wildcard)),
                     path_node,
                 );
                 path_node += 1;
@@ -459,7 +433,7 @@ impl Lgraph {
                 for _ in 1..prod.rhs().len() {
                     slr = slr.add_edge(
                         path_node - 1,
-                        Item::new(None, None, Some(Bracket::Wildcard)),
+                        Item::default().with_bracket(Some(Bracket::Wildcard)),
                         path_node,
                     );
                     path_node += 1;
@@ -467,11 +441,8 @@ impl Lgraph {
 
                 slr = slr.add_edge(
                     path_node - 1,
-                    Item::new(
-                        None,
-                        None,
-                        Some(Bracket::new(prod_idx + prod_bracket_offset, true)),
-                    ),
+                    Item::default()
+                        .with_bracket(Some(Bracket::new(prod_idx + prod_bracket_offset, true))),
                     dispatch_node,
                 );
             }
@@ -504,14 +475,12 @@ impl Lgraph {
 
             slr = slr.add_edge(
                 path_node,
-                Item::new(
-                    Some(sym),
-                    None,
-                    Some(Bracket::new(
+                Item::default()
+                    .with_token(Some(sym))
+                    .with_bracket(Some(Bracket::new(
                         sym_id + non_output_terminal_bracket_offset,
                         true,
-                    )),
-                ),
+                    ))),
                 start_state,
             );
         }
@@ -520,25 +489,21 @@ impl Lgraph {
             .add_end_node(end_node)
             .add_edge(
                 end_node,
-                Item::new(None, None, Some(Bracket::Wildcard)),
+                Item::default().with_bracket(Some(Bracket::Wildcard)),
                 end_node,
             )
             .add_edge(
                 dispatch_node_offset + lr0.grammar.terminals().count(),
-                Item::new(
-                    None,
-                    None,
-                    Some(Bracket::new(start_prod_idx + prod_bracket_offset, false)),
-                ),
+                Item::default().with_bracket(Some(Bracket::new(
+                    start_prod_idx + prod_bracket_offset,
+                    false,
+                ))),
                 end_node,
             )
             .add_edge(
                 start_node,
-                Item::new(
-                    None,
-                    None,
-                    Some(Bracket::new(start_state + state_bracket_offset, true)),
-                ),
+                Item::default()
+                    .with_bracket(Some(Bracket::new(start_state + state_bracket_offset, true))),
                 path_node,
             )
     }

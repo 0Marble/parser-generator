@@ -347,7 +347,7 @@ impl<'a> PossibleWords<'a> {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum Node {
     Leaf(Token),
     RuleStart(usize),

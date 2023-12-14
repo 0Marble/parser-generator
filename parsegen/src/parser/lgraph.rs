@@ -1,8 +1,8 @@
-use std::{collections::VecDeque, fmt::Display, io::Cursor, io::Write};
+use std::{fmt::Display, io::Cursor, io::Write};
 
 use crate::{regex::state_machine::StateMachine, tokenizer::Token};
 
-use super::grammar::{Grammar, TokenOrEnd};
+use super::grammar::{Grammar, Node, TokenOrEnd};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Bracket {
@@ -54,6 +54,7 @@ pub struct Item {
     tok: Option<TokenOrEnd>,
     look_ahead: Option<Vec<TokenOrEnd>>,
     bracket: Option<Bracket>,
+    output: Option<Node>,
 }
 
 impl Item {
@@ -61,12 +62,30 @@ impl Item {
         tok: Option<TokenOrEnd>,
         look_ahead: Option<Vec<TokenOrEnd>>,
         bracket: Option<Bracket>,
+        output: Option<Node>,
     ) -> Self {
         Self {
             tok,
             look_ahead,
             bracket,
+            output,
         }
+    }
+    pub fn with_token(mut self, tok: Option<TokenOrEnd>) -> Self {
+        self.tok = tok;
+        self
+    }
+    pub fn with_look_ahead(mut self, look_ahead: Option<Vec<TokenOrEnd>>) -> Self {
+        self.look_ahead = look_ahead;
+        self
+    }
+    pub fn with_bracket(mut self, bracket: Option<Bracket>) -> Self {
+        self.bracket = bracket;
+        self
+    }
+    pub fn with_output(mut self, output: Option<Node>) -> Self {
+        self.output = output;
+        self
     }
 
     pub fn tok(&self) -> Option<TokenOrEnd> {
@@ -472,6 +491,7 @@ impl<'a> Iterator for PossibleWords<'a> {
                             item.tok(),
                             item.look_ahead().map(|lk| lk.to_vec()),
                             Some(Bracket::Closed(top.unwrap())),
+                            None,
                         )
                     } else {
                         item.clone()

@@ -94,20 +94,14 @@ impl Lgraph {
 
             ll1 = ll1.add_edge(
                 4 * prod_idx,
-                Item::new(
-                    None,
-                    None,
-                    Some(Bracket::new(prod_idx + prod_bracket_offset, true)),
-                ),
+                Item::default()
+                    .with_bracket(Some(Bracket::new(prod_idx + prod_bracket_offset, true))),
                 4 * prod_idx + 1,
             );
             ll1 = ll1.add_edge(
                 4 * prod_idx + 2,
-                Item::new(
-                    None,
-                    None,
-                    Some(Bracket::new(prod_idx + prod_bracket_offset, false)),
-                ),
+                Item::default()
+                    .with_bracket(Some(Bracket::new(prod_idx + prod_bracket_offset, false))),
                 4 * prod_idx + 3,
             );
             ll1 = ll1
@@ -130,11 +124,7 @@ impl Lgraph {
         // step 2: fill out the productions, connecting them when needed
         for (prod_idx, prod) in grammar.productions().enumerate() {
             if prod.rhs().is_empty() {
-                ll1 = ll1.add_edge(
-                    4 * prod_idx + 1,
-                    Item::new(None, None, None),
-                    4 * prod_idx + 2,
-                );
+                ll1 = ll1.add_edge(4 * prod_idx + 1, Item::default(), 4 * prod_idx + 2);
                 continue;
             }
             let mut source = 4 * prod_idx + 1;
@@ -148,18 +138,15 @@ impl Lgraph {
                 };
                 if grammar.is_terminal(t.clone()) {
                     let sym_id = grammar.terminal_index(t.clone()).unwrap();
-                    let item = Item::new(
-                        Some(TokenOrEnd::Token(t.clone())),
-                        None,
-                        Some(Bracket::new(sym_id + terminal_bracket_offset, true)),
-                    );
+                    let item = Item::default()
+                        .with_token(Some(TokenOrEnd::Token(t.clone())))
+                        .with_bracket(Some(Bracket::new(sym_id + terminal_bracket_offset, true)));
                     ll1 = ll1.add_edge(source, item, node_count).add_edge(
                         node_count,
-                        Item::new(
-                            None,
-                            None,
-                            Some(Bracket::new(sym_id + terminal_bracket_offset, false)),
-                        ),
+                        Item::default().with_bracket(Some(Bracket::new(
+                            sym_id + terminal_bracket_offset,
+                            false,
+                        ))),
                         target,
                     );
                     node_count += 1;
@@ -169,11 +156,9 @@ impl Lgraph {
                             continue;
                         }
 
-                        let a_item = Item::new(
-                            None,
-                            Some(look_aheads[prod2_idx].clone()),
-                            Some(Bracket::new(bracket_count, true)), // we will return to target
-                        );
+                        let a_item = Item::default()
+                            .with_look_ahead(Some(look_aheads[prod2_idx].clone()))
+                            .with_bracket(Some(Bracket::new(bracket_count, true)));
 
                         let first_beta = first.first_of_sent(&prod.rhs()[i + 1..]).unwrap();
                         let mut following = vec![];
@@ -193,11 +178,9 @@ impl Lgraph {
                                 }
                             }
                         }
-                        let b_item = Item::new(
-                            None,
-                            Some(following),
-                            Some(Bracket::new(bracket_count, false)),
-                        );
+                        let b_item = Item::default()
+                            .with_look_ahead(Some(following))
+                            .with_bracket(Some(Bracket::new(bracket_count, false)));
                         ll1 = ll1.add_edge(source, a_item, 4 * prod2_idx);
                         ll1 = ll1.add_edge(4 * prod2_idx + 3, b_item, target);
                         bracket_count += 1;
@@ -218,41 +201,30 @@ impl Lgraph {
             if prod.lhs() != start_symbol {
                 continue;
             }
-            let start_item = Item::new(
-                None,
-                Some(look_aheads[i].clone()),
-                Some(Bracket::new(bracket_count, true)),
-            );
-            let end_item = Item::new(
-                Some(TokenOrEnd::End),
-                None,
-                Some(Bracket::new(bracket_count, false)),
-            );
+            let start_item = Item::default()
+                .with_look_ahead(Some(look_aheads[i].clone()))
+                .with_bracket(Some(Bracket::new(bracket_count, true)));
+            let end_item = Item::default()
+                .with_token(Some(TokenOrEnd::End))
+                .with_bracket(Some(Bracket::new(bracket_count, false)));
+
             ll1 = ll1.add_edge(start_node, start_item, 4 * i);
             ll1 = ll1
                 .add_edge(4 * i + 3, end_item, node_count)
                 .add_edge(
                     node_count,
-                    Item::new(
-                        None,
-                        None,
-                        Some(Bracket::new(
-                            terminal_count - 1 + terminal_bracket_offset,
-                            true,
-                        )),
-                    ),
+                    Item::default().with_bracket(Some(Bracket::new(
+                        terminal_count - 1 + terminal_bracket_offset,
+                        true,
+                    ))),
                     node_count + 1,
                 )
                 .add_edge(
                     node_count + 1,
-                    Item::new(
-                        None,
-                        None,
-                        Some(Bracket::new(
-                            terminal_count - 1 + terminal_bracket_offset,
-                            false,
-                        )),
-                    ),
+                    Item::default().with_bracket(Some(Bracket::new(
+                        terminal_count - 1 + terminal_bracket_offset,
+                        false,
+                    ))),
                     end_node,
                 );
             node_count += 2;
