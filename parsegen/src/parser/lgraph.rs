@@ -2,7 +2,7 @@ use std::{fmt::Display, io::Cursor, io::Write};
 
 use crate::{regex::state_machine::StateMachine, tokenizer::Token};
 
-use super::grammar::{Grammar, Node, TokenOrEnd};
+use super::grammar::{Grammar, Node, ParseTree, TokenOrEnd};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Bracket {
@@ -133,6 +133,10 @@ impl Item {
         };
 
         by_brackets || by_letters
+    }
+
+    fn output(&self) -> Option<Node> {
+        self.output.clone()
     }
 }
 
@@ -394,7 +398,7 @@ impl Path {
         }
     }
 
-    pub fn append(mut self, edge: (usize, Item, usize)) -> Self {
+    pub fn append(self, edge: (usize, Item, usize)) -> Self {
         assert_eq!(self.last(), edge.0);
 
         match self {
@@ -403,6 +407,80 @@ impl Path {
                 edges.push(edge);
                 Self::NonEmpty(edges)
             }
+        }
+    }
+
+    pub fn output(&self) -> impl Iterator<Item = Node> + '_ {
+        match self {
+            Path::Empty(_) => Either::A(std::iter::empty()),
+            Path::NonEmpty(edges) => Either::B(edges.iter().flat_map(|(_, item, _)| item.output())),
+        }
+    }
+    pub fn postfix_output(&self) -> impl Iterator<Item = Node> + '_ {
+        self.output().filter(|n| !n.is_rule_start())
+    }
+
+    pub fn to_parse_tree(&self, g: &Grammar) -> ParseTree {
+        let mut stack = vec![];
+        for n in self.postfix_output() {
+            match n {
+                Node::Leaf(t) => stack.push(ParseTree::new(t)),
+                Node::RuleEnd(prod_idx) => {
+                    let prod = g.productions().nth(prod_idx).unwrap();
+                    let mut parent = ParseTree::new(prod.lhs());
+                    parent.replace_with_production(0, prod, prod_idx);
+
+                    let body = stack.split_off(stack.len() - prod.rhs().len());
+                    assert_eq!(body.len(), prod.rhs().len());
+                    for (i, child) in body.into_iter().enumerate() {
+                        parent.replace_with_subtree(i, child);
+                    }
+                    stack.push(parent);
+                }
+                _ => unreachable!(),
+            }
+        }
+
+        assert_eq!(stack.len(), 1);
+        stack.pop().unwrap()
+    }
+
+    pub fn nodes(&self) -> impl Iterator<Item = usize> + '_ {
+        match self {
+            Path::Empty(n) => Either::A(std::iter::once(*n)),
+            Path::NonEmpty(edges) => Either::B(
+                edges
+                    .first()
+                    .map(|(from, _, _)| *from)
+                    .into_iter()
+                    .chain(edges.iter().map(|(_, _, to)| *to)),
+            ),
+        }
+    }
+    pub fn edges(&self) -> impl Iterator<Item = (usize, Item, usize)> + '_ {
+        match self {
+            Path::Empty(_) => Either::A(std::iter::empty()),
+            Path::NonEmpty(edges) => Either::B(edges.iter().cloned()),
+        }
+    }
+}
+
+enum Either<A, B> {
+    A(A),
+    B(B),
+}
+
+impl<A, B, C> Iterator for Either<A, B>
+where
+    A: Iterator<Item = C>,
+    B: Iterator<Item = C>,
+{
+    type Item = C;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        match self {
+            Either::A(it) => it.next(),
+            Either::B(it) => it.next(),
         }
     }
 }
