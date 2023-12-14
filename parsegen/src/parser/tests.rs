@@ -4,7 +4,7 @@ use crate::{parser::lgraph::Bracket, tokenizer::Token};
 
 use super::{
     grammar::{Grammar, GrammarFromStrError, TokenOrEnd},
-    lgraph::{Lgraph, Stack},
+    lgraph::{Lgraph, Path, Stack},
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -33,13 +33,11 @@ impl TestParser for RuntimeParser {
         self.g = Some(g);
         self.grammar = Some(grammar);
     }
-    fn parse(&self, toks: &[Token]) -> Result<String, TraverseError> {
-        let mut res = vec![];
-        let mut w = Cursor::new(&mut res);
-        let w = &mut w;
+    fn parse(&self, toks: &[Token]) -> Result<Path, TraverseError> {
         let g = self.g.as_ref().unwrap();
         let grammar = self.grammar.as_ref().unwrap();
         let terminal_count = grammar.terminals().count() + 1;
+        let mut path = Path::Empty(g.start_nodes().next().unwrap());
 
         let mut state = g.start_nodes().next().unwrap();
         let mut stack = Stack::new();
@@ -60,11 +58,10 @@ impl TestParser for RuntimeParser {
             let mut next_state = Some(state);
             while let Some(s) = next_state.take() {
                 state = s;
-                // print!("-> {s} -");
                 let mut has_consumed = false;
-                let mut bracket = None;
+                let mut edge = None;
 
-                for (_, item, next) in g.edges_from(state) {
+                for (from, item, to) in g.edges_from(state) {
                     let bracket_ok = item.bracket().map_or(true, |b| stack.can_accept(b));
                     let token_match = item.tok().map_or(false, |t| t == cur_tok);
                     let can_consume = need_to_consume && token_match;
@@ -81,39 +78,27 @@ impl TestParser for RuntimeParser {
                     if !bracket_ok || !look_ahead_ok || !token_ok {
                         continue;
                     }
-                    if next_state.is_some() {
+                    if edge.is_some() {
                         return Err(TraverseError::ConflictOn(state, cur_tok, stack.top()));
                     }
 
-                    bracket = item.bracket();
-                    next_state = Some(next);
+                    edge = Some((from, item, to));
                     has_consumed = can_consume;
                 }
-                if has_consumed {
-                    // print!("{cur_tok}");
-                    need_to_consume = false;
-                    // write!(w, "{}, ", cur_tok).unwrap();
-                    cur_tok = next_tok.take().unwrap();
-                }
-                if let Some(b) = bracket {
-                    // print!("{}", b);
-                    if !b.is_open() {
-                        let idx = stack.top().unwrap();
-                        if idx < terminal_count {
-                            let t = grammar
-                                .terminals()
-                                .nth(idx)
-                                .map(TokenOrEnd::Token)
-                                .unwrap_or(TokenOrEnd::End);
-                            write!(w, "{t}, ").unwrap();
-                        } else {
-                            grammar
-                                .productions()
-                                .nth(idx - terminal_count)
-                                .map(|p| write!(w, "{}[{}], ", p.lhs(), idx - terminal_count));
-                        }
+
+                if let Some(edge) = edge {
+                    next_state = Some(edge.2);
+                    if let Some(b) = edge.1.bracket() {
+                        assert!(stack.try_accept_mut(b));
                     }
-                    assert!(stack.try_accept_mut(b));
+                    path = path.append(edge);
+                } else {
+                    // return Err(TraverseError::NoWayToContinue(state, cur_tok, stack.top()));
+                }
+
+                if has_consumed {
+                    need_to_consume = false;
+                    cur_tok = next_tok.take().unwrap();
                 }
             }
 
@@ -129,13 +114,13 @@ impl TestParser for RuntimeParser {
             return Err(TraverseError::StackNotEmptied(stack));
         }
 
-        Ok(String::from_utf8(res)?)
+        Ok(path)
     }
 }
 
 pub trait TestParser {
     fn init(&mut self, g: Lgraph, grammar: Grammar);
-    fn parse(&self, toks: &[Token]) -> Result<String, TraverseError>;
+    fn parse(&self, toks: &[Token]) -> Result<Path, TraverseError>;
 }
 
 fn parens_grammar_simple() -> Grammar {
@@ -253,11 +238,9 @@ pub fn ll1_gauntlet(t: &mut dyn TestParser) {
                 acc += " ";
                 acc
             });
-            assert_eq!(
-                t.parse(&toks),
-                Ok(tree),
-                "failed on \n\tgrammar={grammar}\n\tinput={s}\n",
-            );
+            let path = t.parse(&toks).unwrap();
+            let res = path.to_parse_tree(&grammar);
+            assert_eq!(res, tree, "\tgrammar: {grammar}\n\ttoks: {s}");
         }
     }
 }
@@ -337,19 +320,17 @@ pub fn slr_gauntlet(t: &mut dyn TestParser) {
                 acc += " ";
                 acc
             });
-            assert_eq!(
-                t.parse(&toks),
-                Ok(tree.strip_suffix("$, ").unwrap().to_string()),
-                "failed on \n\tgrammar={grammar}\n\tinput={s}\n",
-            );
+            let path = t.parse(&toks).unwrap();
+            let res = path.to_parse_tree(&grammar);
+            assert_eq!(res, tree, "\tgrammar: {grammar}\n\ttoks: {s}");
         }
     }
 }
 
 #[test]
 fn runtime_parser() {
-    writeln!(std::io::stderr(), "testing ll1").unwrap();
+    println!("testing ll1");
     ll1_gauntlet(&mut RuntimeParser::default());
-    writeln!(std::io::stderr(), "testing slr").unwrap();
+    println!("testing slr");
     slr_gauntlet(&mut RuntimeParser::default());
 }

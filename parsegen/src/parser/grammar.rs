@@ -1,10 +1,4 @@
-use std::{
-    collections::{LinkedList, VecDeque},
-    fmt::Display,
-    io::Cursor,
-    io::Write,
-    str::FromStr,
-};
+use std::{collections::VecDeque, fmt::Display, io::Cursor, io::Write, str::FromStr};
 
 use crate::tokenizer::Token;
 
@@ -326,8 +320,8 @@ pub struct PossibleWords<'a> {
     grammar: &'a Grammar,
     depth: usize,
     max_depth: Option<usize>,
-    stack: Vec<LinkedList<Node>>,
-    next_stack: Vec<LinkedList<Node>>,
+    stack: Vec<ParseTree>,
+    next_stack: Vec<ParseTree>,
 }
 
 impl<'a> PossibleWords<'a> {
@@ -336,7 +330,7 @@ impl<'a> PossibleWords<'a> {
             grammar,
             depth: 0,
             max_depth: None,
-            next_stack: vec![LinkedList::from([Node::Leaf(grammar.start())])],
+            next_stack: vec![ParseTree::new(grammar.start())],
             stack: vec![],
         }
     }
@@ -347,11 +341,21 @@ impl<'a> PossibleWords<'a> {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum Node {
     Leaf(Token),
-    RuleStart(usize),
-    RuleEnd(usize),
+    RuleStart(usize, Token),
+    RuleEnd(usize, Token),
+}
+
+impl Display for Node {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Node::Leaf(l) => write!(f, "{l}"),
+            Node::RuleStart(i, l) => write!(f, "S{l}[{i}]"),
+            Node::RuleEnd(i, l) => write!(f, "E{l}[{i}]"),
+        }
+    }
 }
 
 impl Node {
@@ -370,11 +374,39 @@ impl Node {
             None
         }
     }
+
+    /// Returns `true` if the node is [`RuleStart`].
+    ///
+    /// [`RuleStart`]: Node::RuleStart
+    #[must_use]
+    pub fn is_rule_start(&self) -> bool {
+        matches!(self, Self::RuleStart(..))
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ParseTree {
     nodes: VecDeque<Node>,
+}
+
+impl Display for ParseTree {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut depth = 0;
+        for (_, node) in self.nodes() {
+            match node {
+                Node::Leaf(l) => writeln!(f, "{}-{}", " |".repeat(depth), l)?,
+                Node::RuleStart(i, n) => {
+                    writeln!(f, "{}-{n}[{i}]", " |".repeat(depth))?;
+                    depth += 1;
+                }
+                Node::RuleEnd(_, _) => {
+                    depth -= 1;
+                }
+            }
+        }
+
+        Ok(())
+    }
 }
 
 impl ParseTree {
@@ -384,8 +416,32 @@ impl ParseTree {
         }
     }
 
-    pub fn nodes(&self) -> impl Iterator<Item = (usize, &'_ Node)> {
-        self.nodes.iter().enumerate()
+    pub fn root(&self) -> Token {
+        match &self.nodes[0] {
+            Node::Leaf(n) => n.clone(),
+            Node::RuleStart(_, n) => n.clone(),
+            _ => unreachable!(),
+        }
+    }
+    pub fn nodes(&self) -> impl Iterator<Item = (usize, Node)> + '_ {
+        self.nodes.iter().cloned().enumerate()
+    }
+
+    pub fn leafs(&self) -> impl Iterator<Item = Token> + '_ {
+        self.nodes().filter_map(|(_, n)| n.as_leaf().cloned())
+    }
+
+    pub fn replace_with_subtree(&mut self, node_idx: usize, mut sub_tree: Self) {
+        let mut right = self.nodes.split_off(node_idx);
+
+        assert_eq!(
+            right.pop_front().unwrap(),
+            Node::Leaf(sub_tree.root()),
+            "replacing node {node_idx}"
+        );
+
+        self.nodes.append(&mut sub_tree.nodes);
+        self.nodes.append(&mut right);
     }
 
     pub fn replace_with_production(&mut self, node_idx: usize, prod: &Production, prod_idx: usize) {
@@ -394,40 +450,17 @@ impl ParseTree {
             .pop_front()
             .and_then(|n| n.as_leaf().cloned())
             .map_or(false, |t| prod.lhs() == t));
-        self.nodes.push_back(Node::RuleStart(prod_idx));
+        self.nodes.push_back(Node::RuleStart(prod_idx, prod.lhs()));
         for t in prod.rhs() {
             self.nodes.push_back(Node::Leaf(t.clone()));
         }
-        self.nodes.push_back(Node::RuleEnd(prod_idx));
+        self.nodes.push_back(Node::RuleEnd(prod_idx, prod.lhs()));
         self.nodes.append(&mut right);
-    }
-
-    pub fn to_string(&self, g: &Grammar) -> String {
-        let mut derivation: Vec<u8> = vec![];
-        let mut w = Cursor::new(&mut derivation);
-        let w = &mut w;
-
-        for node in &self.nodes {
-            match node {
-                Node::Leaf(tok) => {
-                    write!(w, "{tok}, ").unwrap();
-                }
-                Node::RuleEnd(prod_idx) => write!(
-                    w,
-                    "{}[{prod_idx}], ",
-                    g.productions().nth(*prod_idx).unwrap().lhs()
-                )
-                .unwrap(),
-                _ => (),
-            }
-        }
-
-        String::from_utf8(derivation).unwrap()
     }
 }
 
 impl<'a> Iterator for PossibleWords<'a> {
-    type Item = (Vec<Token>, String);
+    type Item = (Vec<Token>, ParseTree);
 
     fn next(&mut self) -> Option<Self::Item> {
         loop {
@@ -441,7 +474,7 @@ impl<'a> Iterator for PossibleWords<'a> {
 
             while let Some(tree) = self.stack.pop() {
                 let mut had_nonterms = false;
-                for (i, node) in tree.iter().enumerate() {
+                for (i, node) in tree.nodes() {
                     if let Node::Leaf(leaf) = node {
                         if self.grammar.is_terminal(leaf.clone()) {
                             continue;
@@ -449,21 +482,12 @@ impl<'a> Iterator for PossibleWords<'a> {
 
                         had_nonterms = true;
                         for (prod_idx, prod) in self.grammar.productions().into_iter().enumerate() {
-                            if &prod.lhs() != leaf {
+                            if prod.lhs() != leaf {
                                 continue;
                             }
-                            let mut left = tree.clone();
-                            let mut right = left.split_off(i);
-                            assert_eq!(right.pop_front(), Some(Node::Leaf(leaf.clone())));
-                            left.push_back(Node::RuleStart(prod_idx));
-                            for t in prod.rhs() {
-                                left.push_back(Node::Leaf(t.clone()));
-                            }
-                            left.push_back(Node::RuleEnd(prod_idx));
-                            for n in right {
-                                left.push_back(n);
-                            }
-                            self.next_stack.push(left);
+                            let mut new_tree = tree.clone();
+                            new_tree.replace_with_production(i, prod, prod_idx);
+                            self.next_stack.push(new_tree);
                         }
                         break;
                     }
@@ -473,28 +497,7 @@ impl<'a> Iterator for PossibleWords<'a> {
                     continue;
                 }
 
-                let mut toks = vec![];
-                let mut derivation: Vec<u8> = vec![];
-                let mut w = Cursor::new(&mut derivation);
-                let w = &mut w;
-
-                for node in tree {
-                    match node {
-                        Node::Leaf(tok) => {
-                            toks.push(tok.clone());
-                            write!(w, "{tok}, ").unwrap();
-                        }
-                        Node::RuleEnd(prod_idx) => write!(
-                            w,
-                            "{}[{prod_idx}], ",
-                            self.grammar.productions().nth(prod_idx).unwrap().lhs()
-                        )
-                        .unwrap(),
-                        _ => (),
-                    }
-                }
-
-                return Some((toks, String::from_utf8(derivation).unwrap() + "$, "));
+                return Some((tree.leafs().collect(), tree));
             }
         }
     }
@@ -644,7 +647,7 @@ impl First {
 }
 
 impl Grammar {
-    pub fn parse(&self, word: &[Token]) -> Option<String> {
+    pub fn parse(&self, word: &[Token]) -> Option<ParseTree> {
         let first = self.first();
         let follow = self.follow(&first);
         let mut stack = vec![];
@@ -671,7 +674,7 @@ impl Grammar {
 
                     if let Node::Leaf(node) = node {
                         if self.is_terminal(node.clone()) {
-                            if cur_tok.as_token() == Some(node) {
+                            if cur_tok.as_token() == Some(&node) {
                                 word_ptr += 1;
                                 continue;
                             }
@@ -682,7 +685,7 @@ impl Grammar {
 
                         let mut applied_rules = vec![];
                         for (prod_idx, prod) in self.productions().enumerate() {
-                            if &prod.lhs() != node {
+                            if prod.lhs() != node {
                                 continue;
                             }
 
@@ -720,7 +723,7 @@ impl Grammar {
                 }
 
                 if !had_nonterms {
-                    return Some(tree.to_string(self));
+                    return Some(tree);
                 }
             }
         }

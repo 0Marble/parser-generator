@@ -1,8 +1,8 @@
-use std::{collections::VecDeque, fmt::Display, io::Cursor, io::Write};
+use std::{fmt::Display, io::Cursor, io::Write};
 
 use crate::{regex::state_machine::StateMachine, tokenizer::Token};
 
-use super::grammar::{Grammar, TokenOrEnd};
+use super::grammar::{Grammar, Node, ParseTree, TokenOrEnd};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Bracket {
@@ -54,6 +54,7 @@ pub struct Item {
     tok: Option<TokenOrEnd>,
     look_ahead: Option<Vec<TokenOrEnd>>,
     bracket: Option<Bracket>,
+    output: Option<Node>,
 }
 
 impl Item {
@@ -61,12 +62,30 @@ impl Item {
         tok: Option<TokenOrEnd>,
         look_ahead: Option<Vec<TokenOrEnd>>,
         bracket: Option<Bracket>,
+        output: Option<Node>,
     ) -> Self {
         Self {
             tok,
             look_ahead,
             bracket,
+            output,
         }
+    }
+    pub fn with_token(mut self, tok: Option<TokenOrEnd>) -> Self {
+        self.tok = tok;
+        self
+    }
+    pub fn with_look_ahead(mut self, look_ahead: Option<Vec<TokenOrEnd>>) -> Self {
+        self.look_ahead = look_ahead;
+        self
+    }
+    pub fn with_bracket(mut self, bracket: Option<Bracket>) -> Self {
+        self.bracket = bracket;
+        self
+    }
+    pub fn with_output(mut self, output: Option<Node>) -> Self {
+        self.output = output;
+        self
     }
 
     pub fn tok(&self) -> Option<TokenOrEnd> {
@@ -114,6 +133,10 @@ impl Item {
         };
 
         by_brackets || by_letters
+    }
+
+    fn output(&self) -> Option<Node> {
+        self.output.clone()
     }
 }
 
@@ -271,6 +294,11 @@ impl Display for Lgraph {
                 write!(w2, "token=\"{}\", ", tok).unwrap();
                 write!(w1, "{}\\n", tok).unwrap();
             }
+            if let Some(out) = l.output() {
+                write!(w2, "output=\"{}\", ", out).unwrap();
+                write!(w1, "<{}>\\n", out).unwrap();
+            }
+
             if let Some(bracket) = l.bracket() {
                 let idx = bracket
                     .index()
@@ -375,7 +403,7 @@ impl Path {
         }
     }
 
-    pub fn append(mut self, edge: (usize, Item, usize)) -> Self {
+    pub fn append(self, edge: (usize, Item, usize)) -> Self {
         assert_eq!(self.last(), edge.0);
 
         match self {
@@ -384,6 +412,80 @@ impl Path {
                 edges.push(edge);
                 Self::NonEmpty(edges)
             }
+        }
+    }
+
+    pub fn output(&self) -> impl Iterator<Item = Node> + '_ {
+        match self {
+            Path::Empty(_) => Either::A(std::iter::empty()),
+            Path::NonEmpty(edges) => Either::B(edges.iter().flat_map(|(_, item, _)| item.output())),
+        }
+    }
+    pub fn postfix_output(&self) -> impl Iterator<Item = Node> + '_ {
+        self.output().filter(|n| !n.is_rule_start())
+    }
+
+    pub fn to_parse_tree(&self, g: &Grammar) -> ParseTree {
+        let mut stack = vec![];
+        for n in self.postfix_output() {
+            match n {
+                Node::Leaf(t) => stack.push(ParseTree::new(t)),
+                Node::RuleEnd(prod_idx, _) => {
+                    let prod = g.productions().nth(prod_idx).unwrap();
+                    let mut parent = ParseTree::new(prod.lhs());
+                    parent.replace_with_production(0, prod, prod_idx);
+
+                    let body = stack.split_off(stack.len() - prod.rhs().len());
+                    assert_eq!(body.len(), prod.rhs().len());
+                    for (i, child) in body.into_iter().enumerate().rev() {
+                        parent.replace_with_subtree(i + 1, child);
+                    }
+                    stack.push(parent);
+                }
+                _ => unreachable!(),
+            }
+        }
+
+        assert_eq!(stack.len(), 1);
+        stack.pop().unwrap()
+    }
+
+    pub fn nodes(&self) -> impl Iterator<Item = usize> + '_ {
+        match self {
+            Path::Empty(n) => Either::A(std::iter::once(*n)),
+            Path::NonEmpty(edges) => Either::B(
+                edges
+                    .first()
+                    .map(|(from, _, _)| *from)
+                    .into_iter()
+                    .chain(edges.iter().map(|(_, _, to)| *to)),
+            ),
+        }
+    }
+    pub fn edges(&self) -> impl Iterator<Item = (usize, Item, usize)> + '_ {
+        match self {
+            Path::Empty(_) => Either::A(std::iter::empty()),
+            Path::NonEmpty(edges) => Either::B(edges.iter().cloned()),
+        }
+    }
+}
+
+enum Either<A, B> {
+    A(A),
+    B(B),
+}
+
+impl<A, B, C> Iterator for Either<A, B>
+where
+    A: Iterator<Item = C>,
+    B: Iterator<Item = C>,
+{
+    type Item = C;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        match self {
+            Either::A(it) => it.next(),
+            Either::B(it) => it.next(),
         }
     }
 }
@@ -472,6 +574,7 @@ impl<'a> Iterator for PossibleWords<'a> {
                             item.tok(),
                             item.look_ahead().map(|lk| lk.to_vec()),
                             Some(Bracket::Closed(top.unwrap())),
+                            None,
                         )
                     } else {
                         item.clone()
