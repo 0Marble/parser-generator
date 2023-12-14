@@ -1,8 +1,8 @@
-use std::{fmt::Display, io::Cursor, io::Write};
+use std::{collections::VecDeque, fmt::Display, io::Cursor, io::Write};
 
 use crate::{regex::state_machine::StateMachine, tokenizer::Token};
 
-use super::grammar::TokenOrEnd;
+use super::grammar::{Grammar, TokenOrEnd};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Bracket {
@@ -321,5 +321,221 @@ impl Display for Lgraph {
         writeln!(f, "}}").unwrap();
 
         Ok(())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Path {
+    Empty(usize),
+    NonEmpty(Vec<(usize, Item, usize)>),
+}
+
+impl Display for Path {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Path::Empty(n) => write!(f, "->{n}->"),
+            Path::NonEmpty(e) => {
+                write!(f, "->{}-", e[0].0)?;
+
+                for (_, item, to) in e {
+                    if let Some(tok) = item.tok() {
+                        write!(f, "{tok}")?;
+                    }
+                    if let Some(lk) = item.look_ahead() {
+                        write!(f, "[")?;
+                        for tok in lk {
+                            write!(f, "{tok},")?;
+                        }
+                        write!(f, "]")?;
+                    }
+                    if let Some(b) = item.bracket() {
+                        write!(f, "{b}")?;
+                    }
+
+                    write!(f, "->{to}-")?;
+                }
+
+                write!(f, ">")
+            }
+        }
+    }
+}
+
+impl Path {
+    pub fn first(&self) -> usize {
+        match self {
+            Path::Empty(n) => *n,
+            Path::NonEmpty(e) => e.first().unwrap().0,
+        }
+    }
+    pub fn last(&self) -> usize {
+        match self {
+            Path::Empty(n) => *n,
+            Path::NonEmpty(e) => e.last().unwrap().2,
+        }
+    }
+
+    pub fn append(mut self, edge: (usize, Item, usize)) -> Self {
+        assert_eq!(self.last(), edge.0);
+
+        match self {
+            Path::Empty(_) => Self::NonEmpty(vec![edge]),
+            Path::NonEmpty(mut edges) => {
+                edges.push(edge);
+                Self::NonEmpty(edges)
+            }
+        }
+    }
+}
+
+impl Lgraph {
+    pub fn possible_words<'a, 'b>(&'a self, grammar: &'b Grammar) -> PossibleWords
+    where
+        'b: 'a,
+    {
+        PossibleWords {
+            lg: self,
+            stack: Default::default(),
+            next_stack: Vec::from([(
+                Path::Empty(self.start_nodes().next().unwrap()),
+                Stack::default(),
+                None,
+            )]),
+            grammar,
+        }
+    }
+}
+
+pub struct PossibleWords<'a> {
+    lg: &'a Lgraph,
+    stack: Vec<(Path, Stack, Option<TokenOrEnd>)>,
+    next_stack: Vec<(Path, Stack, Option<TokenOrEnd>)>,
+    grammar: &'a Grammar,
+}
+
+impl<'a> Iterator for PossibleWords<'a> {
+    type Item = (Vec<Token>, String);
+
+    fn next(&mut self) -> Option<Self::Item> {
+        loop {
+            if self.stack.is_empty() {
+                if self.next_stack.is_empty() {
+                    return None;
+                }
+                std::mem::swap(&mut self.stack, &mut self.next_stack);
+            }
+
+            while let Some((path, stack, lookahead)) = self.stack.pop() {
+                for (from, item, to) in self.lg.edges_from(path.last()) {
+                    let top = stack.top();
+                    let next_stack = if let Some(b) = item.bracket() {
+                        let (s, ok) = stack.clone().try_accept(b);
+                        if !ok {
+                            continue;
+                        }
+                        s
+                    } else {
+                        stack.clone()
+                    };
+
+                    let next_lookaheads = if let Some(lookahead) = lookahead.as_ref() {
+                        match (item.tok(), item.look_ahead()) {
+                            (None, None) => Some(vec![lookahead.clone()]),
+                            (None, Some(lk)) => {
+                                if !lk.contains(lookahead) {
+                                    continue;
+                                } else {
+                                    Some(lk.to_vec())
+                                }
+                            }
+                            (Some(tok), None) => {
+                                if &tok != lookahead {
+                                    continue;
+                                } else {
+                                    None
+                                }
+                            }
+                            (Some(tok), Some(lk)) => {
+                                if &tok != lookahead {
+                                    continue;
+                                } else {
+                                    Some(lk.to_vec())
+                                }
+                            }
+                        }
+                    } else {
+                        item.look_ahead().map(|lk| lk.to_vec())
+                    };
+
+                    let item = if let Some(Bracket::Wildcard) = item.bracket() {
+                        Item::new(
+                            item.tok(),
+                            item.look_ahead().map(|lk| lk.to_vec()),
+                            Some(Bracket::Closed(top.unwrap())),
+                        )
+                    } else {
+                        item.clone()
+                    };
+                    if let Some(lk) = next_lookaheads {
+                        for lk in lk {
+                            self.next_stack.push((
+                                path.clone().append((from, item.clone(), to)),
+                                next_stack.clone(),
+                                Some(lk.clone()),
+                            ));
+                        }
+                    } else {
+                        self.next_stack.push((
+                            path.clone().append((from, item.clone(), to)),
+                            next_stack.clone(),
+                            None,
+                        ));
+                    }
+                }
+
+                if stack.top().is_some() || !self.lg.is_end_node(path.last()) {
+                    continue;
+                }
+                let edges = if let Path::NonEmpty(edges) = path {
+                    edges
+                } else {
+                    continue;
+                };
+
+                let terminal_count = self.grammar.terminals().count() + 1;
+                let mut toks = vec![];
+                let mut buf = vec![];
+                let mut w = Cursor::new(&mut buf);
+                let w = &mut w;
+
+                for (_, item, _) in edges {
+                    if let Some(b) = item.bracket() {
+                        if b.is_open() {
+                            continue;
+                        }
+                        let idx = b.index().unwrap();
+                        if idx < terminal_count {
+                            let t = self
+                                .grammar
+                                .terminals()
+                                .nth(idx)
+                                .map(TokenOrEnd::Token)
+                                .unwrap_or(TokenOrEnd::End);
+                            write!(w, "{t}, ").unwrap();
+                            if let TokenOrEnd::Token(t) = t {
+                                toks.push(t);
+                            }
+                        } else {
+                            self.grammar
+                                .productions()
+                                .nth(idx - terminal_count)
+                                .map(|p| write!(w, "{}[{}], ", p.lhs(), idx - terminal_count));
+                        }
+                    }
+                }
+
+                return Some((toks, String::from_utf8(buf).unwrap()));
+            }
+        }
     }
 }

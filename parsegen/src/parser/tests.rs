@@ -3,7 +3,7 @@ use std::{io::Cursor, io::Write, str::FromStr, string::FromUtf8Error};
 use crate::{parser::lgraph::Bracket, tokenizer::Token};
 
 use super::{
-    grammar::{Grammar, TokenOrEnd},
+    grammar::{Grammar, GrammarFromStrError, TokenOrEnd},
     lgraph::{Lgraph, Stack},
 };
 
@@ -232,6 +232,20 @@ pub fn ll1_gauntlet(t: &mut dyn TestParser) {
             "Non deterministic for {}",
             grammar
         );
+
+        // for (toks, tree) in g.possible_words(&grammar).take(100) {
+        //     let s = toks.iter().fold(String::new(), |mut acc, tok| {
+        //         acc += tok.name();
+        //         acc += " ";
+        //         acc
+        //     });
+        //     assert_eq!(
+        //         grammar.parse(&toks),
+        //         Some(tree.strip_suffix("$, ").unwrap().to_string()),
+        //         "failed on \n\tgrammar={grammar}\n\tinput={s}\n",
+        //     );
+        // }
+
         t.init(g, grammar.clone());
         for (toks, tree) in grammar.possible_words().take(500) {
             let s = toks.iter().fold(String::new(), |mut acc, tok| {
@@ -302,6 +316,20 @@ pub fn slr_gauntlet(t: &mut dyn TestParser) {
             "Non deterministic for {}",
             grammar
         );
+
+        // for (toks, tree) in g.possible_words(&grammar).take(10) {
+        //     let s = toks.iter().fold(String::new(), |mut acc, tok| {
+        //         acc += tok.name();
+        //         acc += " ";
+        //         acc
+        //     });
+        //     assert_eq!(
+        //         grammar.parse(&toks),
+        //         Some(tree),
+        //         "failed on \n\tgrammar={grammar}\n\tinput={s}\n",
+        //     );
+        // }
+
         t.init(g, grammar.clone());
         for (toks, tree) in grammar.possible_words().take(500) {
             let s = toks.iter().fold(String::new(), |mut acc, tok| {
@@ -320,8 +348,8 @@ pub fn slr_gauntlet(t: &mut dyn TestParser) {
 
 #[test]
 fn runtime_parser() {
-    println!("testing ll1");
+    writeln!(std::io::stderr(), "testing ll1").unwrap();
     ll1_gauntlet(&mut RuntimeParser::default());
-    println!("testing slr");
+    writeln!(std::io::stderr(), "testing slr").unwrap();
     slr_gauntlet(&mut RuntimeParser::default());
 }

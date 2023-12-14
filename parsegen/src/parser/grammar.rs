@@ -1,4 +1,10 @@
-use std::{collections::LinkedList, fmt::Display, io::Cursor, io::Write, str::FromStr};
+use std::{
+    collections::{LinkedList, VecDeque},
+    fmt::Display,
+    io::Cursor,
+    io::Write,
+    str::FromStr,
+};
 
 use crate::tokenizer::Token;
 
@@ -322,7 +328,6 @@ pub struct PossibleWords<'a> {
     max_depth: Option<usize>,
     stack: Vec<LinkedList<Node>>,
     next_stack: Vec<LinkedList<Node>>,
-    mirrored: bool,
 }
 
 impl<'a> PossibleWords<'a> {
@@ -333,7 +338,6 @@ impl<'a> PossibleWords<'a> {
             max_depth: None,
             next_stack: vec![LinkedList::from([Node::Leaf(grammar.start())])],
             stack: vec![],
-            mirrored: false,
         }
     }
 
@@ -341,16 +345,85 @@ impl<'a> PossibleWords<'a> {
         self.max_depth = Some(derivation_count);
         self
     }
-    pub fn mirrored(mut self) -> Self {
-        self.mirrored = !self.mirrored;
-        self
-    }
 }
+
 #[derive(Debug, Clone, PartialEq, Eq)]
-enum Node {
+pub enum Node {
     Leaf(Token),
     RuleStart(usize),
     RuleEnd(usize),
+}
+
+impl Node {
+    /// Returns `true` if the node is [`Leaf`].
+    ///
+    /// [`Leaf`]: Node::Leaf
+    #[must_use]
+    pub fn is_leaf(&self) -> bool {
+        matches!(self, Self::Leaf(..))
+    }
+
+    pub fn as_leaf(&self) -> Option<&Token> {
+        if let Self::Leaf(v) = self {
+            Some(v)
+        } else {
+            None
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ParseTree {
+    nodes: VecDeque<Node>,
+}
+
+impl ParseTree {
+    pub fn new(start: Token) -> Self {
+        Self {
+            nodes: [Node::Leaf(start)].into(),
+        }
+    }
+
+    pub fn nodes(&self) -> impl Iterator<Item = (usize, &'_ Node)> {
+        self.nodes.iter().enumerate()
+    }
+
+    pub fn replace_with_production(&mut self, node_idx: usize, prod: &Production, prod_idx: usize) {
+        let mut right = self.nodes.split_off(node_idx);
+        assert!(right
+            .pop_front()
+            .and_then(|n| n.as_leaf().cloned())
+            .map_or(false, |t| prod.lhs() == t));
+        self.nodes.push_back(Node::RuleStart(prod_idx));
+        for t in prod.rhs() {
+            self.nodes.push_back(Node::Leaf(t.clone()));
+        }
+        self.nodes.push_back(Node::RuleEnd(prod_idx));
+        self.nodes.append(&mut right);
+    }
+
+    pub fn to_string(&self, g: &Grammar) -> String {
+        let mut derivation: Vec<u8> = vec![];
+        let mut w = Cursor::new(&mut derivation);
+        let w = &mut w;
+
+        for node in &self.nodes {
+            match node {
+                Node::Leaf(tok) => {
+                    write!(w, "{tok}, ").unwrap();
+                }
+                Node::RuleEnd(prod_idx) => write!(
+                    w,
+                    "{}[{prod_idx}], ",
+                    g.productions().nth(*prod_idx).unwrap().lhs()
+                )
+                .unwrap(),
+                _ => (),
+            }
+        }
+
+        String::from_utf8(derivation).unwrap()
+    }
 }
 
 impl<'a> Iterator for PossibleWords<'a> {
@@ -567,6 +640,90 @@ impl First {
         f.push(TokenOrEps::Eps);
 
         Some(f)
+    }
+}
+
+impl Grammar {
+    pub fn parse(&self, word: &[Token]) -> Option<String> {
+        let first = self.first();
+        let follow = self.follow(&first);
+        let mut stack = vec![];
+        let mut next_stack = vec![ParseTree::new(self.start())];
+
+        loop {
+            if stack.is_empty() {
+                if next_stack.is_empty() {
+                    return None;
+                }
+                std::mem::swap(&mut stack, &mut next_stack);
+            }
+
+            'OUTER: while let Some(tree) = stack.pop() {
+                let mut had_nonterms = false;
+                let mut word_ptr = 0;
+
+                for (i, node) in tree.nodes() {
+                    let cur_tok = word
+                        .get(word_ptr)
+                        .cloned()
+                        .map(TokenOrEnd::Token)
+                        .unwrap_or(TokenOrEnd::End);
+
+                    if let Node::Leaf(node) = node {
+                        if self.is_terminal(node.clone()) {
+                            if cur_tok.as_token() == Some(node) {
+                                word_ptr += 1;
+                                continue;
+                            }
+
+                            continue 'OUTER;
+                        }
+                        had_nonterms = true;
+
+                        let mut applied_rules = vec![];
+                        for (prod_idx, prod) in self.productions().enumerate() {
+                            if &prod.lhs() != node {
+                                continue;
+                            }
+
+                            for f in first.first_of_sent(prod.rhs()).unwrap() {
+                                match f {
+                                    TokenOrEps::Token(t) => {
+                                        if cur_tok == TokenOrEnd::Token(t) {
+                                            applied_rules.push(prod_idx);
+                                            continue;
+                                        }
+                                    }
+                                    TokenOrEps::Eps => {
+                                        if follow.follow(prod.lhs()).unwrap().contains(&cur_tok) {
+                                            applied_rules.push(prod_idx);
+                                            continue;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        for prod_idx in applied_rules {
+                            let mut new_tree = tree.clone();
+                            new_tree.replace_with_production(
+                                i,
+                                self.productions().nth(prod_idx).unwrap(),
+                                prod_idx,
+                            );
+                            next_stack.push(new_tree);
+                        }
+                        break;
+                    } else {
+                        continue;
+                    }
+                }
+
+                if !had_nonterms {
+                    return Some(tree.to_string(self));
+                }
+            }
+        }
     }
 }
 
