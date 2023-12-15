@@ -2,7 +2,7 @@ name: Parsegen
 
 on:
   push:
-    bracnches:
+    branches:
       - main
   pull_request:
     branches:
