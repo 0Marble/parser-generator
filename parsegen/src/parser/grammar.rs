@@ -165,6 +165,12 @@ impl Grammar {
             .find(|(_, s)| s == &t)
             .map(|(i, _)| i)
     }
+    pub fn non_terminal_index(&self, t: Token) -> Option<usize> {
+        self.non_terminals()
+            .enumerate()
+            .find(|(_, s)| s == &t)
+            .map(|(i, _)| i)
+    }
 
     pub fn productions(&self) -> impl Iterator<Item = &Production> {
         self.productions.iter()
@@ -173,7 +179,9 @@ impl Grammar {
         self.terminals.iter().cloned()
     }
     pub fn non_terminals(&self) -> impl Iterator<Item = Token> + '_ {
-        self.productions().map(|p| p.lhs())
+        let mut lhs: Vec<_> = self.productions().map(|p| p.lhs()).collect();
+        lhs.dedup();
+        lhs.into_iter()
     }
     pub fn productions_for(&self, nonterm: Token) -> impl Iterator<Item = &Production> {
         self.productions().filter(move |p| p.lhs() == nonterm)
