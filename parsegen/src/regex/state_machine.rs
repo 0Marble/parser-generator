@@ -21,6 +21,9 @@ where
         }
     }
     pub fn add_start_node(mut self, n: usize) -> Self {
+        if self.start.contains(&n) {
+            return self;
+        }
         self.start.push(n);
         if self.nodes.iter().all(|(node, _)| node != &n) {
             self.nodes.push((n, self.edges.len()));
@@ -29,6 +32,9 @@ where
         self
     }
     pub fn add_end_node(mut self, n: usize) -> Self {
+        if self.end.contains(&n) {
+            return self;
+        }
         self.end.push(n);
         if self.nodes.iter().all(|(node, _)| node != &n) {
             self.nodes.push((n, self.edges.len()));

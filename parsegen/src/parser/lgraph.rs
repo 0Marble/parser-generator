@@ -229,6 +229,9 @@ impl Lgraph {
     pub fn edges_from(&self, n: usize) -> impl Iterator<Item = (usize, Item, usize)> + '_ {
         self.inner.edges_from(n)
     }
+    pub fn edges_to(&self, n: usize) -> impl Iterator<Item = (usize, Item, usize)> + '_ {
+        self.inner.edges_to(n)
+    }
 
     pub fn end_nodes(&self) -> impl Iterator<Item = usize> + '_ {
         self.inner.end_nodes()
