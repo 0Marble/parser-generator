@@ -2,7 +2,7 @@ use std::{any::type_name, collections::HashSet, fmt::Display, io::Cursor, io::Wr
 
 #[derive(Debug, Default, Clone, PartialEq)]
 pub struct StateMachine<T> {
-    edges: Vec<Vec<(T, usize)>>,
+    edges: Vec<(Vec<(T, usize)>, Vec<(usize, T)>)>,
     start: Vec<usize>,
     end: Vec<usize>,
     nodes: Vec<(usize, usize)>,
@@ -24,7 +24,7 @@ where
         self.start.push(n);
         if self.nodes.iter().all(|(node, _)| node != &n) {
             self.nodes.push((n, self.edges.len()));
-            self.edges.push(vec![]);
+            self.edges.push((vec![], vec![]));
         }
         self
     }
@@ -32,7 +32,7 @@ where
         self.end.push(n);
         if self.nodes.iter().all(|(node, _)| node != &n) {
             self.nodes.push((n, self.edges.len()));
-            self.edges.push(vec![]);
+            self.edges.push((vec![], vec![]));
         }
         self
     }
@@ -55,14 +55,17 @@ where
     pub fn add_edge(mut self, from: usize, letter: T, to: usize) -> Self {
         self = self.add_node(from);
         self = self.add_node(to);
-        let edges_loc = self.edges_loc(from);
-        self.edges[edges_loc].push((letter, to));
+        let from_loc = self.edges_loc(from);
+        let to_loc = self.edges_loc(to);
+        self.edges[from_loc].0.push((letter.clone(), to));
+        self.edges[to_loc].1.push((from, letter));
         self
     }
     pub fn edges(&self) -> impl Iterator<Item = (usize, T, usize)> + '_ {
         self.edges.iter().enumerate().flat_map(|(loc, edges)| {
             let from = self.from_node(loc);
             edges
+                .0
                 .iter()
                 .map(move |(item, to)| (from, item.clone(), *to))
         })
@@ -70,8 +73,16 @@ where
     pub fn edges_from(&self, n: usize) -> impl Iterator<Item = (usize, T, usize)> + '_ {
         let loc = self.edges_loc(n);
         self.edges[loc]
+            .0
             .iter()
             .map(move |(item, to)| (n, item.clone(), *to))
+    }
+    pub fn edges_to(&self, n: usize) -> impl Iterator<Item = (usize, T, usize)> + '_ {
+        let loc = self.edges_loc(n);
+        self.edges[loc]
+            .1
+            .iter()
+            .map(move |(from, item)| (*from, item.clone(), n))
     }
     pub fn is_end_node(&self, n: usize) -> bool {
         self.end.contains(&n)
@@ -89,7 +100,7 @@ where
     pub fn add_node(mut self, n: usize) -> Self {
         if self.nodes.iter().all(|(node, _)| node != &n) {
             self.nodes.push((n, self.edges.len()));
-            self.edges.push(vec![]);
+            self.edges.push((vec![], vec![]));
         }
 
         self
