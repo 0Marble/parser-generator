@@ -2,12 +2,52 @@ use super::lgraph::Lgraph;
 
 impl Lgraph {
     pub fn optimize(mut self) -> Self {
-        let mut changed = false;
+        loop {
+            let (next, step0) = self.deadends();
+            let (next, step1) = next.back_merge();
 
-        while changed {
-            (self, changed) = self.back_merge();
+            self = next;
+            if step0 || step1 {
+                continue;
+            }
+
+            break;
         }
         self
+    }
+
+    // remove nodes with no inputs or no outputs (ignoring starts and ends)
+    fn deadends(self) -> (Self, bool) {
+        let mut res = Self::default();
+        let mut changed = false;
+        let mut no_inputs = vec![];
+        let mut no_outputs = vec![];
+
+        for node in self.nodes() {
+            if self.edges_to(node).count() == 0 && self.start_nodes().all(|n| n != node) {
+                no_inputs.push(node);
+                changed = true;
+            }
+            if self.edges_from(node).count() == 0 && self.end_nodes().all(|n| n != node) {
+                no_outputs.push(node);
+                changed = true;
+            }
+        }
+
+        for (from, item, to) in self.edges() {
+            if no_inputs.contains(&from) || no_outputs.contains(&to) {
+                continue;
+            }
+            res = res.add_edge(from, item, to);
+        }
+        for start in self.start_nodes() {
+            res = res.add_start_node(start);
+        }
+        for end in self.end_nodes() {
+            res = res.add_end_node(end);
+        }
+
+        (res, changed)
     }
 
     // if two nodes q1 and q2 have only one target p, we can merge these nodes into q3
