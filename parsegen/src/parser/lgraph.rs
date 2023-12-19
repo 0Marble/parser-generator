@@ -246,6 +246,9 @@ impl Lgraph {
     pub fn is_end_node(&self, n: usize) -> bool {
         self.inner.is_end_node(n)
     }
+    pub fn is_start_node(&self, n: usize) -> bool {
+        self.inner.is_start_node(n)
+    }
 
     pub fn nodes(&self) -> impl Iterator<Item = usize> + '_ {
         self.inner.nodes()

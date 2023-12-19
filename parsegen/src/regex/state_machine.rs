@@ -96,7 +96,7 @@ where
                 self.edges[loc]
                     .1
                     .iter()
-                    .map(move |(to, item)| (n, item.clone(), *to)),
+                    .map(move |(to, item)| (*to, item.clone(), n)),
             )
         } else {
             Either::A(std::iter::empty())
@@ -104,6 +104,9 @@ where
     }
     pub fn is_end_node(&self, n: usize) -> bool {
         self.end.contains(&n)
+    }
+    pub fn is_start_node(&self, n: usize) -> bool {
+        self.start.contains(&n)
     }
     pub fn nodes(&self) -> impl Iterator<Item = usize> + '_ {
         self.nodes.iter().map(|(node, _)| *node)

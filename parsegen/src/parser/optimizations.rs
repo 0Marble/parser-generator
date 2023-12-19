@@ -13,17 +13,15 @@ impl Lgraph {
                 let (next, step0) = self.deadends();
                 let (next, step1) = next.back_merge();
                 let (next, step2) = next.empty_edges();
+                let (next, step3) = next.merge_diamonds();
 
-                if count == 1 {
-                    return next;
-                }
                 self = next;
                 count += 1;
                 assert!(
                     old_node_count >= self.nodes().count()
                         && old_edge_count >= self.edges().count()
                 );
-                if step0 || step1 || step2 {
+                if step0 || step1 || step2 || step3 {
                     last_chance = true;
                     continue;
                 }
@@ -144,7 +142,9 @@ impl Lgraph {
         }
     }
 
-    pub fn empty_edges(self) -> (Self, bool) {
+    // merge two nodes if they have an empty edge between them, and all the other output edges
+    // respect determinism
+    fn empty_edges(self) -> (Self, bool) {
         let mut res = Lgraph::default();
         let mut next_node = self.nodes().max().unwrap_or_default() + 1;
         let mut pairs = vec![];
@@ -201,32 +201,87 @@ impl Lgraph {
         (res, false)
     }
 
-    // if there is a section a -x-> b -y-> c, where there are no other edges coming from or into b, we can
-    // try merge x and y. open-closed bracket pair can be removed, lookahead may be merged if it
-    // does not influence determinism on a.
-    // pub fn linear_merge(self) -> (Self, bool) {
-    //     let mut res = Lgraph::default();
-    //
-    //     for b in self.nodes() {
-    //         let mut edges_from = self.edges_from(b);
-    //         let mut edges_to = self.edges_to(b);
-    //
-    //         let (a, x) = if let Some((a, x, _)) = edges_to.next() {
-    //             (a, x)
-    //         } else {
-    //             continue;
-    //         };
-    //         let (c, y) = if let Some((_, y, c)) = edges_from.next() {
-    //             (c, y)
-    //         } else {
-    //             continue;
-    //         };
-    //
-    //         if edges_from.next().is_some() || edges_to.next().is_some() {
-    //             continue;
-    //         }
-    //     }
-    //
-    //     (res, true)
-    // }
+    // if there are edges (p, )ji, qj), (qj, (ji, q), we can replace them with an edge (p, _, q)
+    fn merge_diamonds(self) -> (Self, bool) {
+        let mut res = Lgraph::default();
+        let mut pqs = vec![];
+
+        'OUTER: for p in self.nodes() {
+            let mut q = None;
+
+            for (_, i1, q1) in self.edges_from(p) {
+                if i1.tok().is_some()
+                    || i1.look_ahead().is_some()
+                    || i1.output().is_some()
+                    || self.is_end_node(q1)
+                    || self.is_start_node(q1)
+                {
+                    continue 'OUTER;
+                }
+
+                let b1 = if let Some(b) = i1.bracket() {
+                    if b.is_open() {
+                        continue 'OUTER;
+                    }
+                    b
+                } else {
+                    continue 'OUTER;
+                };
+
+                if self.edges_to(q1).any(|(from, _, _)| from != p) {
+                    continue 'OUTER;
+                }
+
+                for (_, i2, to) in self.edges_from(q1) {
+                    if i2.tok().is_some() || i2.look_ahead().is_some() || i2.output().is_some() {
+                        continue 'OUTER;
+                    }
+                    let b2 = if let Some(b) = i2.bracket() {
+                        if !b.is_open() {
+                            continue 'OUTER;
+                        }
+                        b
+                    } else {
+                        continue 'OUTER;
+                    };
+
+                    if b2.index() != b1.index() && !b1.is_wildcard() {
+                        continue 'OUTER;
+                    }
+
+                    if q.is_none() {
+                        q = Some(to);
+                        continue;
+                    }
+
+                    if q != Some(to) {
+                        continue 'OUTER;
+                    }
+                }
+            }
+            if let Some(q) = q {
+                pqs.push((p, q));
+                res = res.add_edge(p, Item::default(), q);
+            }
+        }
+
+        if pqs.is_empty() {
+            return (self, false);
+        }
+
+        for (from, item, to) in self.edges() {
+            if pqs.iter().any(|(p, _)| *p == from) {
+                continue;
+            }
+            res = res.add_edge(from, item, to);
+        }
+        for node in self.start_nodes() {
+            res = res.add_start_node(node);
+        }
+        for node in self.end_nodes() {
+            res = res.add_end_node(node);
+        }
+
+        (res, true)
+    }
 }
