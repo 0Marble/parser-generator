@@ -1,17 +1,27 @@
 use super::lgraph::Lgraph;
+use std::io::Write;
 
 impl Lgraph {
     pub fn optimize(mut self) -> Self {
+        let mut last_chance = true;
         loop {
-            let (next, step0) = self.deadends();
-            let (next, step1) = next.back_merge();
+            loop {
+                println!("=========================");
+                let (next, step0) = self.deadends();
+                let (next, step1) = next.back_merge();
 
-            self = next;
-            if step0 || step1 {
-                continue;
+                self = next;
+                if step0 || step1 {
+                    last_chance = true;
+                    continue;
+                }
+
+                break;
             }
-
-            break;
+            if !last_chance {
+                break;
+            }
+            last_chance = false;
         }
         self
     }
@@ -33,6 +43,9 @@ impl Lgraph {
                 changed = true;
             }
         }
+        if !changed {
+            return (self, false);
+        }
 
         for (from, item, to) in self.edges() {
             if no_inputs.contains(&from) || no_outputs.contains(&to) {
@@ -47,79 +60,91 @@ impl Lgraph {
             res = res.add_end_node(end);
         }
 
-        (res, changed)
+        (res, true)
     }
 
-    // if two nodes q1 and q2 have only one target p, we can merge these nodes into q3
+    // if all edges from nodes q1 .. qn are of the kind (qi, xij, p), where p is some node and the
+    // sets of items { xij } are equal, than we can merge qi nodes.
     fn back_merge(self) -> (Self, bool) {
         let mut res = Lgraph::default();
-        let mut changed = false;
-        let mut next_node = self.nodes().max().unwrap_or_default();
-        let mut merged_nodes = vec![];
+        let mut next_node = self.nodes().max().unwrap_or_default() + 1;
+        let mut pairs = vec![];
 
         for p in self.nodes() {
-            let mut merged_qs = vec![];
-            'QS: for (q, x, _) in self.edges_to(p) {
-                for (_, _, to) in self.edges_from(q) {
-                    if to != p {
-                        continue 'QS;
-                    }
-                }
-                merged_qs.push((q, x));
-            }
-
-            if merged_qs.len() > 1 {
-                changed = true;
-            } else {
-                continue;
-            }
-
-            let new_q = next_node;
-            res = res.add_node(new_q).add_node(p);
-            next_node += 1;
-            for (q, x) in merged_qs {
-                merged_nodes.push((q, new_q));
-                if res.edges_from(new_q).any(|(_, y, r)| y == x && p == r) {
+            'OUTER: for (i, (q1, _, _)) in self.edges_to(p).enumerate() {
+                if self.edges_from(q1).any(|(_, _, n)| n != p)
+                    || pairs.iter().any(|(n1, n2, _)| *n1 == q1 || *n2 == q1)
+                {
                     continue;
                 }
-                res = res.add_edge(new_q, x, p);
+
+                for (q2, _, _) in self.edges_to(p).skip(i + 1) {
+                    if self.edges_from(q2).any(|(_, item2, n)| {
+                        n != p || self.edges_from(q1).all(|(_, item1, _)| item1 != item2)
+                    }) || pairs.iter().any(|(n1, n2, _)| *n1 == q2 || *n2 == q2)
+                    {
+                        continue;
+                    }
+
+                    pairs.push((q1, q2, next_node));
+                    println!("({},{}) -> {}", q1, q2, next_node);
+                    next_node += 1;
+                    continue 'OUTER;
+                }
             }
+        }
+
+        if pairs.is_empty() {
+            return (self, false);
         }
 
         for (from, item, to) in self.edges() {
-            if merged_nodes.iter().any(|(q, _)| *q == from) {
+            let from = if let Some((_, _, merge)) =
+                pairs.iter().find(|(a, b, _)| *a == from || *b == from)
+            {
+                *merge
+            } else {
+                from
+            };
+            let to =
+                if let Some((_, _, merge)) = pairs.iter().find(|(a, b, _)| *a == to || *b == to) {
+                    *merge
+                } else {
+                    to
+                };
+            if res.edges_from(from).any(|(_, it, t)| it == item && t == to) {
                 continue;
             }
-
-            if let Some((_, new_q)) = merged_nodes.iter().find(|(q, _)| *q == to).cloned() {
-                if res.edges_to(new_q).any(|(f, x, _)| f == from && item == x) {
-                    continue;
-                }
-                res = res.add_edge(from, item, new_q);
-                continue;
-            }
-
             res = res.add_edge(from, item, to);
         }
 
-        for start in self.start_nodes() {
-            if let Some((_, new_q)) = merged_nodes.iter().find(|(q, _)| *q == start).cloned() {
-                if res.start_nodes().any(|s| s == new_q) {
-                    continue;
-                }
-                res = res.add_start_node(new_q);
+        for node in self.start_nodes() {
+            let node = if let Some((_, _, merge)) =
+                pairs.iter().find(|(a, b, _)| *a == node || *b == node)
+            {
+                *merge
+            } else {
+                node
+            };
+            if res.start_nodes().any(|n| n == node) {
+                continue;
             }
+            res = res.add_start_node(node);
+        }
+        for node in self.end_nodes() {
+            let node = if let Some((_, _, merge)) =
+                pairs.iter().find(|(a, b, _)| *a == node || *b == node)
+            {
+                *merge
+            } else {
+                node
+            };
+            if res.end_nodes().any(|n| n == node) {
+                continue;
+            }
+            res = res.add_end_node(node);
         }
 
-        for end in self.end_nodes() {
-            if let Some((_, new_q)) = merged_nodes.iter().find(|(q, _)| *q == end).cloned() {
-                if res.end_nodes().any(|s| s == new_q) {
-                    continue;
-                }
-                res = res.add_end_node(new_q);
-            }
-        }
-
-        (res, changed)
+        (res, false)
     }
 }

@@ -473,7 +473,7 @@ impl Path {
     }
 }
 
-enum Either<A, B> {
+pub enum Either<A, B> {
     A(A),
     B(B),
 }
