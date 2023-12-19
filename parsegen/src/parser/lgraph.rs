@@ -135,8 +135,14 @@ impl Item {
         by_brackets || by_letters
     }
 
-    fn output(&self) -> Option<Node> {
+    pub fn output(&self) -> Option<Node> {
         self.output.clone()
+    }
+    pub fn is_empty(&self) -> bool {
+        self.tok().is_none()
+            && self.bracket().is_none()
+            && self.look_ahead().is_none()
+            && self.output().is_none()
     }
 }
 
@@ -277,7 +283,7 @@ impl Lgraph {
 
 impl Display for Lgraph {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        writeln!(f, "digraph {{\n  node [shape=circle];\n  Q1 [style=invisible, height=0, width=0, fixedsize=true];")?;
+        writeln!(f, "digraph {{\n  node [shape=circle];\n  Q1 [style=invisible, height=0, width=0, fixedsize=true];\n  node_count = {};\n  edge_count = {};",self.nodes().count(),self.edges().count())?;
 
         writeln!(f, "  Q1 -> \"{}\";", self.start_nodes().next().unwrap())?;
 
