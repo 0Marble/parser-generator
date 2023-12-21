@@ -1,4 +1,4 @@
-use std::{fmt::Display, io::Cursor, io::Write};
+use std::{fmt::Display, io::Cursor, io::Write, rc::Rc};
 
 use crate::{regex::state_machine::StateMachine, tokenizer::Token};
 
@@ -52,7 +52,7 @@ impl Bracket {
 #[derive(Debug, Default, Clone, PartialEq, Eq, Hash)]
 pub struct Item {
     tok: Option<TokenOrEnd>,
-    look_ahead: Option<Vec<TokenOrEnd>>,
+    look_ahead: Option<Rc<[TokenOrEnd]>>,
     bracket: Option<Bracket>,
     output: Option<Node>,
 }
@@ -66,7 +66,10 @@ impl Item {
     ) -> Self {
         Self {
             tok,
-            look_ahead,
+            look_ahead: look_ahead.map(|mut l| {
+                l.sort();
+                l.into()
+            }),
             bracket,
             output,
         }
@@ -76,7 +79,10 @@ impl Item {
         self
     }
     pub fn with_look_ahead(mut self, look_ahead: Option<Vec<TokenOrEnd>>) -> Self {
-        self.look_ahead = look_ahead;
+        self.look_ahead = look_ahead.map(|mut l| {
+            l.sort();
+            l.into()
+        });
         self
     }
     pub fn with_bracket(mut self, bracket: Option<Bracket>) -> Self {
@@ -95,7 +101,7 @@ impl Item {
         self.bracket.clone()
     }
     pub fn look_ahead(&self) -> Option<&[TokenOrEnd]> {
-        self.look_ahead.as_ref().map(|t| t.as_slice())
+        self.look_ahead.as_ref().map(|t| t.as_ref())
     }
 
     pub fn is_distinguishable(&self, other: &Self) -> bool {
