@@ -1,27 +1,82 @@
-use super::lgraph::{Item, Lgraph};
-use std::io::Write;
+use crate::regex::state_machine::StateMachine;
+
+use super::lgraph::{Bracket, Item, Lgraph, Path};
+use std::{
+    collections::{HashMap, HashSet, VecDeque},
+    io::Write,
+};
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum Optimization {
+    Deadend,
+    EmptyEdge,
+    BackMerge,
+    Diamonds,
+    UselessBrackets,
+}
+
+impl Optimization {
+    pub fn all() -> impl IntoIterator<Item = Optimization> {
+        [
+            Self::Deadend,
+            Self::EmptyEdge,
+            Self::BackMerge,
+            Self::Diamonds,
+            Self::UselessBrackets,
+        ]
+    }
+}
 
 impl Lgraph {
-    pub fn optimize(mut self) -> Self {
+    pub fn optimize(mut self, optimizations: impl IntoIterator<Item = Optimization>) -> Self {
         let mut last_chance = true;
         let mut count = 0;
+        let opts: HashSet<_> = optimizations.into_iter().collect();
+        use Optimization as O;
         loop {
             loop {
                 let old_node_count = self.nodes().count();
                 let old_edge_count = self.edges().count();
-                println!("=====================");
-                let (next, step0) = self.deadends();
-                let (next, step1) = next.back_merge();
-                let (next, step2) = next.empty_edges();
-                let (next, step3) = next.merge_diamonds();
+                writeln!(std::io::stderr(), "=====================").unwrap();
 
-                self = next;
+                let mut res = false;
+                if opts.contains(&O::Deadend) {
+                    let (next, step) = self.deadends();
+                    self = next;
+                    res |= step;
+                    writeln!(std::io::stderr(), "Deadend: {step}").unwrap();
+                }
+                if opts.contains(&O::BackMerge) {
+                    let (next, step) = self.back_merge();
+                    self = next;
+                    res |= step;
+                    writeln!(std::io::stderr(), "BackMerge: {step}").unwrap();
+                }
+                if opts.contains(&O::EmptyEdge) {
+                    let (next, step) = self.empty_edges();
+                    self = next;
+                    res |= step;
+                    writeln!(std::io::stderr(), "EmptyEdge: {step}").unwrap();
+                }
+                if opts.contains(&O::Diamonds) {
+                    let (next, step) = self.merge_diamonds();
+                    self = next;
+                    res |= step;
+                    writeln!(std::io::stderr(), "Diamonds: {step}").unwrap();
+                }
+                if opts.contains(&O::UselessBrackets) {
+                    let (next, step) = self.useless_brackets();
+                    self = next;
+                    res |= step;
+                    writeln!(std::io::stderr(), "UselessBrackets: {step}").unwrap();
+                }
+
                 count += 1;
                 assert!(
                     old_node_count >= self.nodes().count()
                         && old_edge_count >= self.edges().count()
                 );
-                if step0 || step1 || step2 || step3 {
+                if res {
                     last_chance = true;
                     continue;
                 }
@@ -157,13 +212,14 @@ impl Lgraph {
                 continue;
             }
 
-            for (_, item1, _) in self.edges_from(from) {
+            for (_, item1, q) in self.edges_from(from) {
                 for (_, item2, _) in self.edges_from(to) {
-                    if !item1.is_distinguishable(&item2) {
+                    if !item1.is_distinguishable(&item2) && !(q == to && item1 == item) {
                         continue 'OUTER;
                     }
                 }
             }
+            // writeln!(std::io::stderr(), "({},{}) -> {}", from, to, next_node).unwrap();
             pairs.push((from, to, next_node));
             next_node += 1;
         }
@@ -283,5 +339,191 @@ impl Lgraph {
         }
 
         (res, true)
+    }
+
+    // An edge (p, (i, q1) has a useless open bracket if for all paths p-(i->q1-a1->...->)i->qn, ai
+    // do not have a bracket. Similarily for a closed bracket, but backwards.
+    // We can produce a list l1 of pairs (e, c), where e is an edge with a useless open bracket, and c
+    // is a list of corresponding edges with closing brackets (qn-1 -)i->qn). Similarily for
+    // useless closed brackets, create a list l2.
+    // An edge is useless if its open bracket (i is useless and all corresponding edges in c are
+    // also useless
+    // Basically we should construct a "uselessness" dependency graph. It splits into multiple
+    // connected components, and if a component has no deadend nodes, all edges in it are useless.
+    fn useless_brackets(self) -> (Self, bool) {
+        let mut res = Lgraph::default();
+
+        let mut dep = StateMachine::new();
+        let mut nodes = vec![];
+
+        for (from, item, to) in self.edges() {
+            if let Some(b) = item.bracket() {
+                if let Some(closing) = self.is_useless_open(b, to) {
+                    let open_node = Self::get_or_add_node(&(from, item, to), &mut nodes);
+                    for (a, i, b) in closing {
+                        let close_node = Self::get_or_add_node(&(a, i, b), &mut nodes);
+                        dep = dep.add_edge(open_node, (), close_node);
+                    }
+                } else if let Some(opening) = self.is_useless_closed(b, from) {
+                    let close_node = Self::get_or_add_node(&(from, item, to), &mut nodes);
+                    for (a, i, b) in opening {
+                        let open_node = Self::get_or_add_node(&(a, i, b), &mut nodes);
+                        dep = dep.add_edge(close_node, (), open_node);
+                    }
+                }
+            }
+        }
+
+        if nodes.is_empty() {
+            return (self, false);
+        }
+
+        let mut is_useless: Vec<Option<bool>> = vec![None; nodes.len()];
+        for node in dep.nodes() {
+            if is_useless[node].is_some() {
+                continue;
+            }
+
+            let mut res = true;
+            let mut visited = HashSet::new();
+            let mut stack = vec![node];
+
+            'OUTER: while let Some(from) = stack.pop() {
+                if !visited.insert(from) {
+                    continue;
+                }
+                let mut had_next = false;
+                for (_, _, next) in dep.edges_from(from) {
+                    had_next = true;
+                    stack.push(next);
+
+                    if let Some(old_res) = is_useless[next] {
+                        res = old_res;
+                        break 'OUTER;
+                    }
+                }
+
+                if !had_next {
+                    res = false;
+                    break;
+                }
+            }
+
+            for node in visited.into_iter().chain(stack.into_iter()).chain([node]) {
+                is_useless[node] = Some(res);
+            }
+        }
+
+        for (from, item, to) in is_useless
+            .iter()
+            .enumerate()
+            .filter_map(|(i, u)| u.unwrap().then_some(i))
+            .map(|i| &nodes[i])
+        {
+            writeln!(std::io::stderr(), "USELESS: {}-{:?}->{}", from, item, to).unwrap();
+        }
+
+        let mut changed = false;
+        for (from, item, to) in self.edges() {
+            if let Some(node) = Self::get_node(&(from, item.clone(), to), &nodes) {
+                if is_useless[node].unwrap() {
+                    changed = true;
+                    res = res.add_edge(
+                        from,
+                        Item::default()
+                            .with_token(item.tok())
+                            .with_output(item.output())
+                            .with_look_ahead(item.look_ahead().map(|l| l.to_vec())),
+                        to,
+                    );
+                    continue;
+                }
+            }
+            res = res.add_edge(from, item, to);
+        }
+        for node in self.start_nodes() {
+            res = res.add_start_node(node);
+        }
+        for node in self.end_nodes() {
+            res = res.add_end_node(node);
+        }
+
+        (res, changed)
+    }
+
+    fn get_node<N: Clone + PartialEq>(node: &N, nodes: &[N]) -> Option<usize> {
+        nodes
+            .iter()
+            .enumerate()
+            .find(|(_, n)| *n == node)
+            .map(|(i, _)| i)
+    }
+    fn get_or_add_node<N>(node: &N, nodes: &mut Vec<N>) -> usize
+    where
+        N: Clone + PartialEq,
+    {
+        if let Some(i) = Self::get_node(node, nodes) {
+            i
+        } else {
+            nodes.push(node.clone());
+            nodes.len() - 1
+        }
+    }
+
+    fn is_useless_closed(&self, b: Bracket, from: usize) -> Option<Vec<(usize, Item, usize)>> {
+        if b.is_open() {
+            return None;
+        }
+
+        let mut corresponding = vec![];
+        let mut visited = HashSet::new();
+        let mut queue = VecDeque::from([from]);
+        while let Some(q1) = queue.pop_front() {
+            for (prev, item2, _) in self.edges_to(q1) {
+                let b1 = if let Some(b) = item2.bracket() {
+                    b
+                } else if visited.insert((prev, item2.clone(), q1)) {
+                    queue.push_back(prev);
+                    continue;
+                } else {
+                    return None;
+                };
+
+                if !b1.is_open() || !(b.is_wildcard() || b.index() == b1.index()) {
+                    return None;
+                }
+                corresponding.push((prev, item2, q1));
+            }
+        }
+
+        Some(corresponding)
+    }
+    fn is_useless_open(&self, b: Bracket, to: usize) -> Option<Vec<(usize, Item, usize)>> {
+        if !b.is_open() {
+            return None;
+        }
+
+        let mut corresponding = vec![];
+        let mut visited = HashSet::new();
+        let mut queue = VecDeque::from([to]);
+        while let Some(q1) = queue.pop_front() {
+            for (_, item2, next) in self.edges_from(q1) {
+                let b1 = if let Some(b) = item2.bracket() {
+                    b
+                } else if visited.insert((q1, item2.clone(), next)) {
+                    queue.push_back(next);
+                    continue;
+                } else {
+                    return None;
+                };
+
+                if b1.is_open() || !(b1.is_wildcard() || b1.index() == b.index()) {
+                    return None;
+                }
+                corresponding.push((q1, item2, next));
+            }
+        }
+
+        Some(corresponding)
     }
 }

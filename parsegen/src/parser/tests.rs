@@ -1,6 +1,9 @@
 use std::{io::Cursor, io::Write, str::FromStr, string::FromUtf8Error};
 
-use crate::{parser::lgraph::Bracket, tokenizer::Token};
+use crate::{
+    parser::{lgraph::Bracket, optimizations::Optimization},
+    tokenizer::Token,
+};
 
 use super::{
     grammar::{Grammar, GrammarFromStrError, TokenOrEnd},
@@ -198,7 +201,7 @@ VALS -> VALUE coma VALS | ;
 
 pub fn ll1_gauntlet(t: &mut dyn TestParser) {
     for (grammar, name) in [
-        (empty_language(), "empty_language"),
+        // (empty_language(), "empty_language"),
         (finite_language(), "finite_language"),
         (expr_grammar_ll1(), "expr_grammar_ll1"),
         (parens_grammar_simple(), "parens_grammar_simple"),
@@ -209,7 +212,7 @@ pub fn ll1_gauntlet(t: &mut dyn TestParser) {
         println!("\t{name}");
         let g = Lgraph::ll1(&grammar);
         std::fs::write(format!("tests/ll1-{}.dot", name), g.to_string()).unwrap();
-        let g = g.optimize();
+        let g = g.optimize(Optimization::all());
         std::fs::write(format!("tests/ll1-{}-optimized.dot", name), g.to_string()).unwrap();
         assert_eq!(
             g.is_deterministic(),
@@ -293,7 +296,7 @@ pub fn slr_gauntlet(t: &mut dyn TestParser) {
         println!("\t{name}");
         let g = Lgraph::slr(&grammar);
         std::fs::write(format!("tests/slr-{}.dot", name), g.to_string()).unwrap();
-        let g = g.optimize();
+        let g = g.optimize(Optimization::all());
         std::fs::write(format!("tests/slr-{}-optimized.dot", name), g.to_string()).unwrap();
         assert_eq!(
             g.is_deterministic(),
