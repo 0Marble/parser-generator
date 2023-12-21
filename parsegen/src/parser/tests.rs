@@ -201,7 +201,7 @@ VALS -> VALUE coma VALS | ;
 
 pub fn ll1_gauntlet(t: &mut dyn TestParser) {
     for (grammar, name) in [
-        // (empty_language(), "empty_language"),
+        (empty_language(), "empty_language"),
         (finite_language(), "finite_language"),
         (expr_grammar_ll1(), "expr_grammar_ll1"),
         (parens_grammar_simple(), "parens_grammar_simple"),

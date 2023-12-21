@@ -13,6 +13,7 @@ pub enum Optimization {
     BackMerge,
     Diamonds,
     UselessBrackets,
+    UselessLookahead,
 }
 
 impl Optimization {
@@ -23,6 +24,7 @@ impl Optimization {
             Self::BackMerge,
             Self::Diamonds,
             Self::UselessBrackets,
+            Self::UselessLookahead,
         ]
     }
 }
@@ -40,11 +42,11 @@ impl Lgraph {
                 writeln!(std::io::stderr(), "=====================").unwrap();
 
                 let mut res = false;
-                if opts.contains(&O::Deadend) {
-                    let (next, step) = self.deadends();
+                if opts.contains(&O::UselessLookahead) {
+                    let (next, step) = self.useless_lookahead();
                     self = next;
                     res |= step;
-                    writeln!(std::io::stderr(), "Deadend: {step}").unwrap();
+                    writeln!(std::io::stderr(), "UselessLookahead: {step}").unwrap();
                 }
                 if opts.contains(&O::BackMerge) {
                     let (next, step) = self.back_merge();
@@ -69,6 +71,12 @@ impl Lgraph {
                     self = next;
                     res |= step;
                     writeln!(std::io::stderr(), "UselessBrackets: {step}").unwrap();
+                }
+                if opts.contains(&O::Deadend) {
+                    let (next, step) = self.deadends();
+                    self = next;
+                    res |= step;
+                    writeln!(std::io::stderr(), "Deadend: {step}").unwrap();
                 }
 
                 count += 1;
@@ -378,7 +386,7 @@ impl Lgraph {
             return (self, false);
         }
 
-        let mut is_useless: Vec<Option<bool>> = vec![None; nodes.len()];
+        let mut is_useless = vec![None; nodes.len()];
         for node in dep.nodes() {
             if is_useless[node].is_some() {
                 continue;
@@ -412,15 +420,6 @@ impl Lgraph {
             for node in visited.into_iter().chain(stack.into_iter()).chain([node]) {
                 is_useless[node] = Some(res);
             }
-        }
-
-        for (from, item, to) in is_useless
-            .iter()
-            .enumerate()
-            .filter_map(|(i, u)| u.unwrap().then_some(i))
-            .map(|i| &nodes[i])
-        {
-            writeln!(std::io::stderr(), "USELESS: {}-{:?}->{}", from, item, to).unwrap();
         }
 
         let mut changed = false;
@@ -525,5 +524,46 @@ impl Lgraph {
         }
 
         Some(corresponding)
+    }
+
+    // Remove lookahead on edge (p, i, q), if it doesnt impact determinism
+    fn useless_lookahead(self) -> (Self, bool) {
+        let mut res = Lgraph::default();
+        let mut changed = false;
+
+        'OUTER: for (from, item, to) in self.edges() {
+            if item.look_ahead().is_none() {
+                res = res.add_edge(from, item, to);
+                continue;
+            }
+
+            let item1 = Item::default()
+                .with_output(item.output())
+                .with_token(item.tok())
+                .with_bracket(item.bracket());
+
+            for (_, item2, next) in self.edges_from(from) {
+                if item2 == item && next == to {
+                    continue;
+                }
+
+                if item2.look_ahead().is_some() {
+                    res = res.add_edge(from, item, to);
+                    continue 'OUTER;
+                }
+            }
+
+            changed = true;
+            res = res.add_edge(from, item1, to);
+        }
+
+        for node in self.start_nodes() {
+            res = res.add_start_node(node);
+        }
+        for node in self.end_nodes() {
+            res = res.add_end_node(node);
+        }
+
+        (res, changed)
     }
 }
