@@ -1,8 +1,10 @@
 use std::{any::type_name, collections::HashSet, fmt::Display, io::Cursor, io::Write};
 
+use crate::parser::lgraph::Either;
+
 #[derive(Debug, Default, Clone, PartialEq)]
 pub struct StateMachine<T> {
-    edges: Vec<Vec<(T, usize)>>,
+    edges: Vec<(Vec<(T, usize)>, Vec<(usize, T)>)>,
     start: Vec<usize>,
     end: Vec<usize>,
     nodes: Vec<(usize, usize)>,
@@ -21,60 +23,90 @@ where
         }
     }
     pub fn add_start_node(mut self, n: usize) -> Self {
+        if self.start.contains(&n) {
+            return self;
+        }
         self.start.push(n);
         if self.nodes.iter().all(|(node, _)| node != &n) {
             self.nodes.push((n, self.edges.len()));
-            self.edges.push(vec![]);
+            self.edges.push((vec![], vec![]));
         }
         self
     }
     pub fn add_end_node(mut self, n: usize) -> Self {
+        if self.end.contains(&n) {
+            return self;
+        }
         self.end.push(n);
         if self.nodes.iter().all(|(node, _)| node != &n) {
             self.nodes.push((n, self.edges.len()));
-            self.edges.push(vec![]);
+            self.edges.push((vec![], vec![]));
         }
         self
     }
-    fn edges_loc(&self, node: usize) -> usize {
+    fn edges_loc(&self, node: usize) -> Option<usize> {
         for (n, loc) in &self.nodes {
             if *n == node {
-                return *loc;
+                return Some(*loc);
             }
         }
-        panic!("Node {node} not in graph")
+        None
     }
-    fn from_node(&self, edge_loc: usize) -> usize {
+    fn from_node(&self, edge_loc: usize) -> Option<usize> {
         for (n, loc) in &self.nodes {
             if *loc == edge_loc {
-                return *n;
+                return Some(*n);
             }
         }
-        panic!("Node with egde location {edge_loc} not in graph")
+        None
     }
     pub fn add_edge(mut self, from: usize, letter: T, to: usize) -> Self {
         self = self.add_node(from);
         self = self.add_node(to);
-        let edges_loc = self.edges_loc(from);
-        self.edges[edges_loc].push((letter, to));
+        let from_loc = self.edges_loc(from).unwrap();
+        let to_loc = self.edges_loc(to).unwrap();
+        self.edges[from_loc].0.push((letter.clone(), to));
+        self.edges[to_loc].1.push((from, letter));
         self
     }
     pub fn edges(&self) -> impl Iterator<Item = (usize, T, usize)> + '_ {
         self.edges.iter().enumerate().flat_map(|(loc, edges)| {
-            let from = self.from_node(loc);
+            let from = self.from_node(loc).unwrap();
             edges
+                .0
                 .iter()
                 .map(move |(item, to)| (from, item.clone(), *to))
         })
     }
     pub fn edges_from(&self, n: usize) -> impl Iterator<Item = (usize, T, usize)> + '_ {
-        let loc = self.edges_loc(n);
-        self.edges[loc]
-            .iter()
-            .map(move |(item, to)| (n, item.clone(), *to))
+        if let Some(loc) = self.edges_loc(n) {
+            Either::B(
+                self.edges[loc]
+                    .0
+                    .iter()
+                    .map(move |(item, to)| (n, item.clone(), *to)),
+            )
+        } else {
+            Either::A(std::iter::empty())
+        }
+    }
+    pub fn edges_to(&self, n: usize) -> impl Iterator<Item = (usize, T, usize)> + '_ {
+        if let Some(loc) = self.edges_loc(n) {
+            Either::B(
+                self.edges[loc]
+                    .1
+                    .iter()
+                    .map(move |(to, item)| (*to, item.clone(), n)),
+            )
+        } else {
+            Either::A(std::iter::empty())
+        }
     }
     pub fn is_end_node(&self, n: usize) -> bool {
         self.end.contains(&n)
+    }
+    pub fn is_start_node(&self, n: usize) -> bool {
+        self.start.contains(&n)
     }
     pub fn nodes(&self) -> impl Iterator<Item = usize> + '_ {
         self.nodes.iter().map(|(node, _)| *node)
@@ -89,7 +121,7 @@ where
     pub fn add_node(mut self, n: usize) -> Self {
         if self.nodes.iter().all(|(node, _)| node != &n) {
             self.nodes.push((n, self.edges.len()));
-            self.edges.push(vec![]);
+            self.edges.push((vec![], vec![]));
         }
 
         self

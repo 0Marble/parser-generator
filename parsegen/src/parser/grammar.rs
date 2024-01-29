@@ -511,7 +511,7 @@ impl<'a> Iterator for PossibleWords<'a> {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum TokenOrEnd {
     Token(Token),
     End,

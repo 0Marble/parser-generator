@@ -1,6 +1,9 @@
 use std::{io::Cursor, io::Write, str::FromStr, string::FromUtf8Error};
 
-use crate::{parser::lgraph::Bracket, tokenizer::Token};
+use crate::{
+    parser::{lgraph::Bracket, optimizations::Optimization},
+    tokenizer::Token,
+};
 
 use super::{
     grammar::{Grammar, GrammarFromStrError, TokenOrEnd},
@@ -35,8 +38,6 @@ impl TestParser for RuntimeParser {
     }
     fn parse(&self, toks: &[Token]) -> Result<Path, TraverseError> {
         let g = self.g.as_ref().unwrap();
-        let grammar = self.grammar.as_ref().unwrap();
-        let terminal_count = grammar.terminals().count() + 1;
         let mut path = Path::Empty(g.start_nodes().next().unwrap());
 
         let mut state = g.start_nodes().next().unwrap();
@@ -211,6 +212,8 @@ pub fn ll1_gauntlet(t: &mut dyn TestParser) {
         println!("\t{name}");
         let g = Lgraph::ll1(&grammar);
         std::fs::write(format!("tests/ll1-{}.dot", name), g.to_string()).unwrap();
+        let g = g.optimize(Optimization::all());
+        std::fs::write(format!("tests/ll1-{}-optimized.dot", name), g.to_string()).unwrap();
         assert_eq!(
             g.is_deterministic(),
             None,
@@ -293,6 +296,8 @@ pub fn slr_gauntlet(t: &mut dyn TestParser) {
         println!("\t{name}");
         let g = Lgraph::slr(&grammar);
         std::fs::write(format!("tests/slr-{}.dot", name), g.to_string()).unwrap();
+        let g = g.optimize(Optimization::all());
+        std::fs::write(format!("tests/slr-{}-optimized.dot", name), g.to_string()).unwrap();
         assert_eq!(
             g.is_deterministic(),
             None,

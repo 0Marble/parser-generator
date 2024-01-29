@@ -1,4 +1,4 @@
-use std::{fmt::Display, io::Cursor, io::Write};
+use std::{fmt::Display, io::Cursor, io::Write, rc::Rc};
 
 use crate::{regex::state_machine::StateMachine, tokenizer::Token};
 
@@ -52,7 +52,7 @@ impl Bracket {
 #[derive(Debug, Default, Clone, PartialEq, Eq, Hash)]
 pub struct Item {
     tok: Option<TokenOrEnd>,
-    look_ahead: Option<Vec<TokenOrEnd>>,
+    look_ahead: Option<Rc<[TokenOrEnd]>>,
     bracket: Option<Bracket>,
     output: Option<Node>,
 }
@@ -66,7 +66,10 @@ impl Item {
     ) -> Self {
         Self {
             tok,
-            look_ahead,
+            look_ahead: look_ahead.map(|mut l| {
+                l.sort();
+                l.into()
+            }),
             bracket,
             output,
         }
@@ -76,7 +79,10 @@ impl Item {
         self
     }
     pub fn with_look_ahead(mut self, look_ahead: Option<Vec<TokenOrEnd>>) -> Self {
-        self.look_ahead = look_ahead;
+        self.look_ahead = look_ahead.map(|mut l| {
+            l.sort();
+            l.into()
+        });
         self
     }
     pub fn with_bracket(mut self, bracket: Option<Bracket>) -> Self {
@@ -95,7 +101,7 @@ impl Item {
         self.bracket.clone()
     }
     pub fn look_ahead(&self) -> Option<&[TokenOrEnd]> {
-        self.look_ahead.as_ref().map(|t| t.as_slice())
+        self.look_ahead.as_ref().map(|t| t.as_ref())
     }
 
     pub fn is_distinguishable(&self, other: &Self) -> bool {
@@ -135,8 +141,14 @@ impl Item {
         by_brackets || by_letters
     }
 
-    fn output(&self) -> Option<Node> {
+    pub fn output(&self) -> Option<Node> {
         self.output.clone()
+    }
+    pub fn is_empty(&self) -> bool {
+        self.tok().is_none()
+            && self.bracket().is_none()
+            && self.look_ahead().is_none()
+            && self.output().is_none()
     }
 }
 
@@ -229,6 +241,9 @@ impl Lgraph {
     pub fn edges_from(&self, n: usize) -> impl Iterator<Item = (usize, Item, usize)> + '_ {
         self.inner.edges_from(n)
     }
+    pub fn edges_to(&self, n: usize) -> impl Iterator<Item = (usize, Item, usize)> + '_ {
+        self.inner.edges_to(n)
+    }
 
     pub fn end_nodes(&self) -> impl Iterator<Item = usize> + '_ {
         self.inner.end_nodes()
@@ -236,6 +251,9 @@ impl Lgraph {
 
     pub fn is_end_node(&self, n: usize) -> bool {
         self.inner.is_end_node(n)
+    }
+    pub fn is_start_node(&self, n: usize) -> bool {
+        self.inner.is_start_node(n)
     }
 
     pub fn nodes(&self) -> impl Iterator<Item = usize> + '_ {
@@ -274,7 +292,7 @@ impl Lgraph {
 
 impl Display for Lgraph {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        writeln!(f, "digraph {{\n  node [shape=circle];\n  Q1 [style=invisible, height=0, width=0, fixedsize=true];")?;
+        writeln!(f, "digraph {{\n  node [shape=circle];\n  Q1 [style=invisible, height=0, width=0, fixedsize=true];\n  node_count = {};\n  edge_count = {};",self.nodes().count(),self.edges().count())?;
 
         writeln!(f, "  Q1 -> \"{}\";", self.start_nodes().next().unwrap())?;
 
@@ -470,7 +488,7 @@ impl Path {
     }
 }
 
-enum Either<A, B> {
+pub enum Either<A, B> {
     A(A),
     B(B),
 }
