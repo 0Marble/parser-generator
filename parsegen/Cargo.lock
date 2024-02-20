@@ -5,10 +5,3 @@ version = 3
 [[package]]
 name = "parsegen"
 version = "0.1.0"
-
-[[package]]
-name = "wordgen"
-version = "0.1.0"
-dependencies = [
- "parsegen",
-]
