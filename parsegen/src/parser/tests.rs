@@ -1,20 +1,17 @@
-use std::{io::Cursor, io::Write, str::FromStr, string::FromUtf8Error};
+use std::{collections::VecDeque, str::FromStr, string::FromUtf8Error};
 
-use crate::{
-    parser::{lgraph::Bracket, optimizations::Optimization},
-    tokenizer::Token,
-};
+use crate::{parser::optimizations::Optimization, tokenizer::Token};
 
 use super::{
-    grammar::{Grammar, GrammarFromStrError, TokenOrEnd},
-    lgraph::{Lgraph, Path, Stack},
+    grammar::{Grammar, TokenOrEnd},
+    lgraph::{Lgraph, Lookahead, Path, Stack},
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TraverseError {
     FromUtf8(FromUtf8Error),
-    ConflictOn(usize, TokenOrEnd, Option<usize>),
-    NoWayToContinue(usize, TokenOrEnd, Option<usize>),
+    ConflictOn(usize, Option<TokenOrEnd>, Option<usize>),
+    NoWayToContinue(usize, Option<TokenOrEnd>, Option<usize>),
     NotAnEndState(usize),
     StackNotEmptied(Stack),
 }
@@ -31,6 +28,78 @@ struct RuntimeParser {
     grammar: Option<Grammar>,
 }
 
+struct Buffer<I> {
+    buf: VecDeque<TokenOrEnd>,
+    it: WordReader<I>,
+}
+
+struct WordReader<I> {
+    it: I,
+    had_end: bool,
+}
+
+impl<I> Iterator for WordReader<I>
+where
+    I: Iterator<Item = Token>,
+{
+    type Item = TokenOrEnd;
+    fn next(&mut self) -> Option<Self::Item> {
+        match self.it.next() {
+            Some(t) => Some(TokenOrEnd::Token(t)),
+            None => {
+                if self.had_end {
+                    None
+                } else {
+                    self.had_end = true;
+                    Some(TokenOrEnd::End)
+                }
+            }
+        }
+    }
+}
+
+impl<I> Buffer<I>
+where
+    I: Iterator<Item = Token>,
+{
+    fn new(it: I) -> Self {
+        Self {
+            buf: VecDeque::new(),
+            it: WordReader { it, had_end: false },
+        }
+    }
+
+    fn extend(&mut self) -> Option<TokenOrEnd> {
+        if let Some(tok) = self.it.next() {
+            self.buf.push_back(tok.clone());
+            return Some(tok);
+        }
+        None
+    }
+
+    fn eat_token(&mut self) -> Option<TokenOrEnd> {
+        self.buf.pop_front()
+    }
+
+    fn compare(&mut self, tok: Option<TokenOrEnd>, lk: Option<Lookahead>) -> bool {
+        for (i, tok) in tok.into_iter().chain(lk.into_iter().flatten()).enumerate() {
+            if let Some(t) = self.buf.get(i).cloned().or_else(|| self.extend()) {
+                if t != tok {
+                    return false;
+                }
+            } else {
+                return false;
+            }
+        }
+
+        true
+    }
+
+    fn peek_token(&self) -> Option<TokenOrEnd> {
+        self.buf.front().cloned()
+    }
+}
+
 impl TestParser for RuntimeParser {
     fn init(&mut self, g: Lgraph, grammar: Grammar) {
         self.g = Some(g);
@@ -42,69 +111,43 @@ impl TestParser for RuntimeParser {
 
         let mut state = g.start_nodes().next().unwrap();
         let mut stack = Stack::new();
-        for i in 0..=toks.len() {
-            let mut cur_tok = toks
-                .get(i)
-                .cloned()
-                .map(TokenOrEnd::Token)
-                .unwrap_or(TokenOrEnd::End);
-            let mut next_tok = Some(
-                toks.get(i + 1)
-                    .cloned()
-                    .map(TokenOrEnd::Token)
-                    .unwrap_or(TokenOrEnd::End),
-            );
+        let mut buf = Buffer::new(toks.iter().cloned());
 
-            let mut need_to_consume = true;
-            let mut next_state = Some(state);
-            while let Some(s) = next_state.take() {
-                state = s;
-                let mut has_consumed = false;
-                let mut edge = None;
+        loop {
+            let mut next = None;
+            let mut consumed_tok = None;
+            let mut consumed_bracket = None;
 
-                for (from, item, to) in g.edges_from(state) {
-                    let bracket_ok = item.bracket().map_or(true, |b| stack.can_accept(b));
-                    let token_match = item.tok().map_or(false, |t| t == cur_tok);
-                    let can_consume = need_to_consume && token_match;
-                    let token_ok = need_to_consume && token_match || item.tok().is_none();
-                    let look_ahead_tok = if !can_consume {
-                        &cur_tok
-                    } else {
-                        next_tok.as_ref().unwrap()
-                    };
-                    let look_ahead_ok = item
-                        .look_ahead()
-                        .map_or(true, |l| l.contains(look_ahead_tok));
-
-                    if !bracket_ok || !look_ahead_ok || !token_ok {
-                        continue;
-                    }
-                    if edge.is_some() {
-                        return Err(TraverseError::ConflictOn(state, cur_tok, stack.top()));
-                    }
-
-                    edge = Some((from, item, to));
-                    has_consumed = can_consume;
+            for (_, item, to) in g.edges_from(state) {
+                if !buf.compare(item.tok(), item.look_ahead()) {
+                    continue;
+                }
+                if !item.bracket().map_or(true, |b| stack.can_accept(b)) {
+                    continue;
                 }
 
-                if let Some(edge) = edge {
-                    next_state = Some(edge.2);
-                    if let Some(b) = edge.1.bracket() {
-                        assert!(stack.try_accept_mut(b));
-                    }
-                    path = path.append(edge);
-                } else {
-                    // return Err(TraverseError::NoWayToContinue(state, cur_tok, stack.top()));
+                if next.is_some() {
+                    return Err(TraverseError::ConflictOn(
+                        state,
+                        buf.peek_token(),
+                        stack.top(),
+                    ));
                 }
-
-                if has_consumed {
-                    need_to_consume = false;
-                    cur_tok = next_tok.take().unwrap();
-                }
+                next = Some(to);
+                consumed_bracket = item.bracket();
+                consumed_tok = item.tok();
+                path = path.append((state, item, to));
+            }
+            if let Some(t) = consumed_tok {
+                assert_eq!(Some(t), buf.eat_token());
+            }
+            if let Some(b) = consumed_bracket {
+                assert!(stack.try_accept_mut(b));
             }
 
-            if need_to_consume {
-                return Err(TraverseError::NoWayToContinue(state, cur_tok, stack.top()));
+            match next {
+                Some(n) => state = n,
+                None => break,
             }
         }
 

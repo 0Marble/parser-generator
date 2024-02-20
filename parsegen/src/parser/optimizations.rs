@@ -39,44 +39,37 @@ impl Lgraph {
             loop {
                 let old_node_count = self.nodes().count();
                 let old_edge_count = self.edges().count();
-                writeln!(std::io::stderr(), "=====================").unwrap();
 
                 let mut res = false;
                 if opts.contains(&O::UselessLookahead) {
                     let (next, step) = self.useless_lookahead();
                     self = next;
                     res |= step;
-                    writeln!(std::io::stderr(), "UselessLookahead: {step}").unwrap();
                 }
                 if opts.contains(&O::BackMerge) {
                     let (next, step) = self.back_merge();
                     self = next;
                     res |= step;
-                    writeln!(std::io::stderr(), "BackMerge: {step}").unwrap();
                 }
                 if opts.contains(&O::EmptyEdge) {
                     let (next, step) = self.empty_edges();
                     self = next;
                     res |= step;
-                    writeln!(std::io::stderr(), "EmptyEdge: {step}").unwrap();
                 }
                 if opts.contains(&O::Diamonds) {
                     let (next, step) = self.merge_diamonds();
                     self = next;
                     res |= step;
-                    writeln!(std::io::stderr(), "Diamonds: {step}").unwrap();
                 }
                 if opts.contains(&O::UselessBrackets) {
                     let (next, step) = self.useless_brackets();
                     self = next;
                     res |= step;
-                    writeln!(std::io::stderr(), "UselessBrackets: {step}").unwrap();
                 }
                 if opts.contains(&O::Deadend) {
                     let (next, step) = self.deadends();
                     self = next;
                     res |= step;
-                    writeln!(std::io::stderr(), "Deadend: {step}").unwrap();
                 }
 
                 count += 1;
@@ -432,7 +425,7 @@ impl Lgraph {
                         Item::default()
                             .with_token(item.tok())
                             .with_output(item.output())
-                            .with_look_ahead(item.look_ahead().map(|l| l.to_vec())),
+                            .with_look_ahead(item.look_ahead()),
                         to,
                     );
                     continue;

@@ -242,9 +242,10 @@ mod tests {
     fn get_results<S: Display>(
         t: &Tokenizer,
         inputs: impl IntoIterator<Item = S>,
-        path: &str,
+        test_name: &str,
     ) -> Vec<String> {
-        Command::new("cargo").args(["init", path]).output().unwrap();
+        Command::new("mkdir").args([test_name]).output().unwrap();
+
         let main_src = r#"
 mod tokenizer;
 use tokenizer::Tokenizer;
@@ -280,12 +281,17 @@ fn main() {
         println!();
     }
 }"#;
-        std::fs::write(format!("{path}/src/main.rs"), main_src).unwrap();
-        t.to_rs(&mut std::fs::File::create(format!("{path}/src/tokenizer.rs")).unwrap())
+        std::fs::write(format!("{test_name}/main.rs"), main_src).unwrap();
+        t.to_rs(&mut std::fs::File::create(format!("{test_name}/tokenizer.rs")).unwrap())
             .unwrap();
 
-        let mut process = Command::new("cargo")
-            .args(["run", "--manifest-path", &format!("{path}/Cargo.toml")])
+        Command::new("rustc")
+            .current_dir(test_name)
+            .args(["--edition", "2021", "main.rs"])
+            .output()
+            .unwrap();
+        let mut process = Command::new(&format!("./main"))
+            .current_dir(test_name)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
@@ -298,7 +304,10 @@ fn main() {
         drop(stdin);
         let output = process.wait_with_output().unwrap().stdout;
         let output = String::from_utf8(output).unwrap();
-        Command::new("rm").args(["-rf", path]).output().unwrap();
+        Command::new("rm")
+            .args(["-rf", &format!("{test_name}")])
+            .output()
+            .unwrap();
         output.lines().map(|s| s.to_string()).collect()
     }
 

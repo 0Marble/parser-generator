@@ -1,6 +1,6 @@
 use super::{
     grammar::{Grammar, Node},
-    lgraph::Lgraph,
+    lgraph::{Lgraph, Lookahead},
 };
 use crate::parser::{
     grammar::{TokenOrEnd, TokenOrEps},
@@ -151,9 +151,14 @@ impl Lgraph {
                             continue;
                         }
 
-                        let a_item = Item::default()
-                            .with_look_ahead(Some(look_aheads[prod2_idx].clone()))
-                            .with_bracket(Some(Bracket::new(bracket_count, true)));
+                        let mut a_items = vec![];
+                        for lk in &look_aheads[prod2_idx] {
+                            a_items.push(
+                                Item::default()
+                                    .with_bracket(Some(Bracket::new(bracket_count, true)))
+                                    .with_look_ahead(Some(Lookahead::new(vec![lk.clone()]))),
+                            );
+                        }
 
                         let first_beta = first.first_of_sent(&prod.rhs()[i + 1..]).unwrap();
                         let mut following = vec![];
@@ -173,11 +178,21 @@ impl Lgraph {
                                 }
                             }
                         }
-                        let b_item = Item::default()
-                            .with_look_ahead(Some(following))
-                            .with_bracket(Some(Bracket::new(bracket_count, false)));
-                        ll1 = ll1.add_edge(source, a_item, 4 * prod2_idx);
-                        ll1 = ll1.add_edge(4 * prod2_idx + 3, b_item, target);
+                        let mut b_items = vec![];
+                        for lk in &following {
+                            b_items.push(
+                                Item::default()
+                                    .with_bracket(Some(Bracket::new(bracket_count, false)))
+                                    .with_look_ahead(Some(Lookahead::new(vec![lk.clone()]))),
+                            );
+                        }
+
+                        for a_item in a_items {
+                            ll1 = ll1.add_edge(source, a_item, 4 * prod2_idx);
+                        }
+                        for b_item in b_items {
+                            ll1 = ll1.add_edge(4 * prod2_idx + 3, b_item, target);
+                        }
                         bracket_count += 1;
                     }
                 }
@@ -196,14 +211,21 @@ impl Lgraph {
             if prod.lhs() != start_symbol {
                 continue;
             }
-            let start_item = Item::default()
-                .with_look_ahead(Some(look_aheads[i].clone()))
-                .with_bracket(Some(Bracket::new(bracket_count, true)));
+
+            let mut start_items = vec![];
+            for lk in &look_aheads[i] {
+                let start_item = Item::default()
+                    .with_look_ahead(Some(Lookahead::new(vec![lk.clone()])))
+                    .with_bracket(Some(Bracket::new(bracket_count, true)));
+                start_items.push(start_item);
+            }
             let end_item = Item::default()
                 .with_token(Some(TokenOrEnd::End))
                 .with_bracket(Some(Bracket::new(bracket_count, false)));
 
-            ll1 = ll1.add_edge(start_node, start_item, 4 * i);
+            for start_item in start_items {
+                ll1 = ll1.add_edge(start_node, start_item, 4 * i);
+            }
             ll1 = ll1.add_edge(4 * i + 3, end_item, node_count).add_edge(
                 node_count,
                 Item::default(),
