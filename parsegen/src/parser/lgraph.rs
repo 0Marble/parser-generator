@@ -1,6 +1,6 @@
 use std::{fmt::Display, io::Cursor, io::Write, rc::Rc};
 
-use crate::regex::state_machine::StateMachine;
+use crate::lexer::state_machine::StateMachine;
 
 use super::grammar::{Grammar, Node, ParseTree, TokenOrEnd};
 

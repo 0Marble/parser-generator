@@ -1,6 +1,6 @@
 use std::{fmt::Display, io::Write, rc::Rc};
 
-use crate::regex::{regular_expression::Regex, state_machine::Dfa};
+use crate::lexer::{regular_expression::Regex, state_machine::Dfa};
 
 #[derive(Debug, Clone, PartialEq, Hash, PartialOrd, Eq, Ord)]
 pub struct Token {

@@ -1,10 +1,7 @@
-use crate::regex::state_machine::StateMachine;
+use crate::lexer::state_machine::StateMachine;
 
-use super::lgraph::{Bracket, Item, Lgraph, Path};
-use std::{
-    collections::{HashMap, HashSet, VecDeque},
-    io::Write,
-};
+use super::lgraph::{Bracket, Item, Lgraph};
+use std::collections::{HashSet, VecDeque};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum Optimization {

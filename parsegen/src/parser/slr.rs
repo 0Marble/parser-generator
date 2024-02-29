@@ -1,6 +1,6 @@
 use std::{fmt::Display, io::Cursor};
 
-use crate::{parser::grammar::Production, tokenizer::Token};
+use crate::{parser::grammar::Production, Token};
 
 use super::{
     grammar::{Grammar, Node, TokenOrEnd},
@@ -15,15 +15,13 @@ struct LR0Automata {
 
 impl LR0Automata {
     pub fn new(grammar: &Grammar) -> Self {
-        let start = grammar.get_unique_token("Start");
+        let start = grammar.get_unique_token("Start").unwrap();
         let grammar = Grammar::new(
-            grammar
-                .productions()
-                .cloned()
-                .chain(std::iter::once(Production::new(
-                    start.clone(),
-                    vec![grammar.start()],
-                ))),
+            grammar.productions().cloned().chain(std::iter::once(
+                Production::new(start.clone(), vec![grammar.start()])
+                    .try_into()
+                    .unwrap(),
+            )),
             start.clone(),
         );
         let (start_prod, _) = grammar

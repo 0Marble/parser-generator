@@ -1,6 +1,6 @@
 use std::{collections::VecDeque, str::FromStr, string::FromUtf8Error};
 
-use crate::{parser::optimizations::Optimization, tokenizer::Token};
+use crate::{parser::optimizations::Optimization, Token};
 
 use super::{
     grammar::{Grammar, TokenOrEnd},
