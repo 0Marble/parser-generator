@@ -1,3 +1,5 @@
+use std::fmt::Display;
+
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct CharSet {
     ranges: Vec<(u32, u32)>,
@@ -6,6 +8,11 @@ pub struct CharSet {
 impl CharSet {
     pub fn empty() -> Self {
         Self { ranges: vec![] }
+    }
+    pub fn full() -> Self {
+        Self {
+            ranges: vec![(0, u32::MAX)],
+        }
     }
 
     pub fn add_range<A: Into<u32>>(&mut self, min: A, max: A) {
@@ -24,7 +31,7 @@ impl CharSet {
             assert!(min <= max);
 
             let overtaken = max != u32::MAX && a > max + 1;
-            let not_reached = b + 1 < min;
+            let not_reached = b != u32::MAX && b + 1 < min;
 
             if overtaken && !put {
                 put = true;
@@ -95,6 +102,9 @@ impl CharSet {
 
         res
     }
+    pub fn setminus(&self, other: &Self) -> Self {
+        self.intersect(&self.intersect(other).complement())
+    }
     pub fn insert<A: Into<u32>>(&mut self, x: A) {
         let x = x.into();
         self.add_range(x, x);
@@ -140,6 +150,25 @@ impl CharSet {
 
     pub fn is_empty(&self) -> bool {
         self.ranges.is_empty()
+    }
+
+    pub fn from_ranges<A: Into<u32>>(ranges: impl IntoIterator<Item = (A, A)>) -> Self {
+        let mut res = Self::empty();
+        for (a, b) in ranges {
+            res.add_range(a.into(), b.into());
+        }
+        res
+    }
+}
+
+impl Display for CharSet {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{{")?;
+        for (a, b) in self.ranges() {
+            write!(f, "[{}-{}]", a, b)?;
+        }
+
+        write!(f, "}}")
     }
 }
 
