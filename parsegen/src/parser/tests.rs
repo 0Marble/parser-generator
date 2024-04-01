@@ -107,9 +107,9 @@ impl TestParser for RuntimeParser {
     }
     fn parse(&self, toks: &[Token]) -> Result<Path, TraverseError> {
         let g = self.g.as_ref().unwrap();
-        let mut path = Path::Empty(g.start_nodes().next().unwrap());
+        let mut path = Path::Empty(g.start());
 
-        let mut state = g.start_nodes().next().unwrap();
+        let mut state = g.start();
         let mut stack = Stack::new();
         let mut buf = Buffer::new(toks.iter().cloned());
 

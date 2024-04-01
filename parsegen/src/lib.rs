@@ -1,6 +1,6 @@
 use std::{fmt::Display, rc::Rc};
 
-// pub mod codegen;
+pub mod codegen;
 pub mod lexer;
 pub mod parser;
 // pub mod tokenizer;
@@ -38,5 +38,127 @@ impl Token {
             }
         }
         Ok(Self { name: name.into() })
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TransitionScheme<I> {
+    edges: Vec<Vec<(usize, usize)>>,
+    back: Vec<Vec<(usize, usize)>>,
+    nodes: Vec<usize>,
+    items: Vec<I>,
+    start: usize,
+    ends: Vec<usize>,
+}
+
+impl<I> TransitionScheme<I> {
+    pub fn new(start: usize) -> Self {
+        Self {
+            edges: vec![vec![]],
+            back: vec![vec![]],
+            nodes: vec![start],
+            items: vec![],
+            start: 0,
+            ends: vec![],
+        }
+    }
+
+    pub fn edges(&self) -> impl Iterator<Item = (usize, &I, usize)> {
+        self.edges
+            .iter()
+            .enumerate()
+            .flat_map(move |(from, edges)| {
+                edges
+                    .iter()
+                    .cloned()
+                    .map(move |(item, to)| (self.nodes[from], &self.items[item], self.nodes[to]))
+            })
+    }
+
+    pub fn edges_from(&self, node: usize) -> impl Iterator<Item = (usize, &I, usize)> {
+        self.node_idx(node).into_iter().flat_map(move |i| {
+            self.edges[i]
+                .iter()
+                .cloned()
+                .map(move |(item, to)| (node, &self.items[item], self.nodes[to]))
+        })
+    }
+
+    pub fn edges_to(&self, node: usize) -> impl Iterator<Item = (usize, &I, usize)> {
+        self.node_idx(node).into_iter().flat_map(move |i| {
+            self.back[i]
+                .iter()
+                .cloned()
+                .map(move |(from, item)| (self.nodes[from], &self.items[item], node))
+        })
+    }
+
+    pub fn nodes(&self) -> impl Iterator<Item = usize> + '_ {
+        self.nodes.iter().cloned()
+    }
+
+    pub fn start(&self) -> usize {
+        self.nodes[self.start]
+    }
+
+    pub fn ends(&self) -> impl Iterator<Item = usize> + '_ {
+        self.ends.iter().cloned().map(|i| self.nodes[i])
+    }
+    pub fn is_end_node(&self, node: usize) -> bool {
+        let node = if let Some(node) = self.node_idx(node) {
+            node
+        } else {
+            return false;
+        };
+        self.ends.contains(&node)
+    }
+
+    fn node_idx(&self, node: usize) -> Option<usize> {
+        let (i, _) = self
+            .nodes
+            .iter()
+            .cloned()
+            .enumerate()
+            .find(|(_, n)| *n == node)?;
+        Some(i)
+    }
+    fn add_node_get_idx(&mut self, node: usize) -> usize {
+        assert!(self.nodes.len() == self.edges.len());
+        match self.node_idx(node) {
+            Some(i) => i,
+            None => {
+                self.nodes.push(node);
+                self.edges.push(vec![]);
+                self.back.push(vec![]);
+                self.nodes.len() - 1
+            }
+        }
+    }
+
+    pub fn add_edge(mut self, from: usize, item: I, to: usize) -> Self {
+        let from = self.add_node_get_idx(from);
+        let to = self.add_node_get_idx(to);
+        self.edges[from].push((self.items.len(), to));
+        self.back[to].push((from, self.items.len()));
+        self.items.push(item);
+
+        self
+    }
+
+    pub fn add_node(mut self, node: usize) -> Self {
+        self.add_node_get_idx(node);
+        self
+    }
+
+    pub fn add_end(mut self, node: usize) -> Self {
+        let node = self.add_node_get_idx(node);
+        self.ends.push(node);
+
+        self
+    }
+
+    pub fn set_start(mut self, node: usize) -> Self {
+        self.start = self.add_node_get_idx(node);
+        self
     }
 }

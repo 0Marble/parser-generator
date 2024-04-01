@@ -244,8 +244,6 @@ impl Lgraph {
         let first = grammar.first();
         let follow = grammar.follow(&first);
 
-        let mut slr = Self::default();
-
         let terminal_count = grammar.terminals().count() + 1;
         let prod_count = grammar.productions().count();
         let nonterm_count = grammar.non_terminals().count();
@@ -254,6 +252,7 @@ impl Lgraph {
         let dispatch_node_offset = end_node + 1;
         let pre_dispatch_node_offset = dispatch_node_offset + terminal_count * nonterm_count;
         let mut path_node = pre_dispatch_node_offset + terminal_count * prod_count;
+        let mut slr = Self::new(start_node);
 
         // step 1
         for (from, tok, to) in &lr0.goto {
@@ -398,7 +397,6 @@ impl Lgraph {
         }
 
         // step 4
-        slr = slr.add_start_node(start_node);
         let (lr0_start, _) = lr0
             .states
             .iter()

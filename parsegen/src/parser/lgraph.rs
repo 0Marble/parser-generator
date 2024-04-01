@@ -1,6 +1,6 @@
 use std::{fmt::Display, io::Cursor, io::Write, rc::Rc};
 
-use crate::lexer::state_machine::StateMachine;
+use crate::TransitionScheme;
 
 use super::grammar::{Grammar, Node, ParseTree, TokenOrEnd};
 
@@ -236,25 +236,35 @@ impl Stack {
             }
             true
         } else {
-            return false;
+            false
         }
     }
 }
 
-#[derive(Debug, Default, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Lgraph {
-    inner: StateMachine<Item>,
+    inner: TransitionScheme<Item>,
     node_labels: Vec<(usize, String)>,
 }
 
 impl Lgraph {
+    pub fn new(start: usize) -> Self {
+        Self {
+            inner: TransitionScheme::new(start),
+            node_labels: vec![],
+        }
+    }
     pub fn add_edge(mut self, from: usize, letter: Item, to: usize) -> Self {
         self.inner = self.inner.add_edge(from, letter, to);
         self
     }
 
     pub fn add_end_node(mut self, n: usize) -> Self {
-        self.inner = self.inner.add_end_node(n);
+        self.inner = self.inner.add_end(n);
+        self
+    }
+    pub fn set_start_node(mut self, n: usize) -> Self {
+        self.inner = self.inner.set_start(n);
         self
     }
 
@@ -263,39 +273,40 @@ impl Lgraph {
         self
     }
 
-    pub fn add_start_node(mut self, n: usize) -> Self {
-        self.inner = self.inner.add_start_node(n);
-        self
+    fn edge_iter<'a, 'b>(
+        it: impl Iterator<Item = (usize, &'a Item, usize)> + 'b,
+    ) -> impl Iterator<Item = (usize, Item, usize)> + 'b + 'a
+    where
+        'b: 'a,
+    {
+        it.map(|(from, item, to)| (from, item.clone(), to))
     }
 
     pub fn edges(&self) -> impl Iterator<Item = (usize, Item, usize)> + '_ {
-        self.inner.edges()
+        Self::edge_iter(self.inner.edges())
     }
 
     pub fn edges_from(&self, n: usize) -> impl Iterator<Item = (usize, Item, usize)> + '_ {
-        self.inner.edges_from(n)
+        Self::edge_iter(self.inner.edges_from(n))
     }
     pub fn edges_to(&self, n: usize) -> impl Iterator<Item = (usize, Item, usize)> + '_ {
-        self.inner.edges_to(n)
+        Self::edge_iter(self.inner.edges_to(n))
     }
 
     pub fn end_nodes(&self) -> impl Iterator<Item = usize> + '_ {
-        self.inner.end_nodes()
+        self.inner.ends()
     }
 
     pub fn is_end_node(&self, n: usize) -> bool {
         self.inner.is_end_node(n)
-    }
-    pub fn is_start_node(&self, n: usize) -> bool {
-        self.inner.is_start_node(n)
     }
 
     pub fn nodes(&self) -> impl Iterator<Item = usize> + '_ {
         self.inner.nodes()
     }
 
-    pub fn start_nodes(&self) -> impl Iterator<Item = usize> + '_ {
-        self.inner.start_nodes()
+    pub fn start(&self) -> usize {
+        self.inner.start()
     }
 
     pub fn set_node_label(mut self, node: usize, label: impl ToString) -> Self {
@@ -328,7 +339,7 @@ impl Display for Lgraph {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         writeln!(f, "digraph {{\n  node [shape=circle];\n  Q1 [style=invisible, height=0, width=0, fixedsize=true];\n  node_count = {};\n  edge_count = {};",self.nodes().count(),self.edges().count())?;
 
-        writeln!(f, "  Q1 -> \"{}\";", self.start_nodes().next().unwrap())?;
+        writeln!(f, "  Q1 -> \"{}\";", self.start())?;
 
         for (node, label) in self.node_labels.iter() {
             writeln!(f, "  {node} [label=\"{label}\", shape=record];")?;

@@ -1,4 +1,4 @@
-use crate::lexer::state_machine::StateMachine;
+use crate::TransitionScheme;
 
 use super::lgraph::{Bracket, Item, Lgraph};
 use std::collections::{HashSet, VecDeque};
@@ -91,13 +91,13 @@ impl Lgraph {
 
     // remove nodes with no inputs or no outputs (ignoring starts and ends)
     fn deadends(self) -> (Self, bool) {
-        let mut res = Self::default();
+        let mut res = Self::new(self.start());
         let mut changed = false;
         let mut no_inputs = vec![];
         let mut no_outputs = vec![];
 
         for node in self.nodes() {
-            if self.edges_to(node).count() == 0 && self.start_nodes().all(|n| n != node) {
+            if self.edges_to(node).count() == 0 && self.start() != node {
                 no_inputs.push(node);
                 changed = true;
             }
@@ -116,9 +116,6 @@ impl Lgraph {
             }
             res = res.add_edge(from, item, to);
         }
-        for start in self.start_nodes() {
-            res = res.add_start_node(start);
-        }
         for end in self.end_nodes() {
             res = res.add_end_node(end);
         }
@@ -129,7 +126,7 @@ impl Lgraph {
     // if all edges from nodes q1 .. qn are of the kind (qi, xij, p), where p is some node and the
     // sets of items { xij } are equal, than we can merge qi nodes.
     fn back_merge(self) -> (Self, bool) {
-        let mut res = Lgraph::default();
+        let mut res = Self::new(0);
         let mut next_node = self.nodes().max().unwrap_or_default() + 1;
         let mut pairs = vec![];
 
@@ -169,13 +166,7 @@ impl Lgraph {
             res = res.add_edge(from, item, to);
         }
 
-        for node in self.start_nodes() {
-            let node = Self::merged_name(node, &pairs);
-            if res.start_nodes().any(|n| n == node) {
-                continue;
-            }
-            res = res.add_start_node(node);
-        }
+        res = res.set_start_node(Self::merged_name(self.start(), &pairs));
         for node in self.end_nodes() {
             let node = Self::merged_name(node, &pairs);
             if res.end_nodes().any(|n| n == node) {
@@ -198,7 +189,7 @@ impl Lgraph {
     // merge two nodes if they have an empty edge between them, and all the other output edges
     // respect determinism
     fn empty_edges(self) -> (Self, bool) {
-        let mut res = Lgraph::default();
+        let mut res = Self::new(0);
         let mut next_node = self.nodes().max().unwrap_or_default() + 1;
         let mut pairs = vec![];
         'OUTER: for (from, item, to) in self.edges() {
@@ -237,13 +228,7 @@ impl Lgraph {
             res = res.add_edge(from, item, to);
         }
 
-        for node in self.start_nodes() {
-            let node = Self::merged_name(node, &pairs);
-            if res.start_nodes().any(|n| n == node) {
-                continue;
-            }
-            res = res.add_start_node(node);
-        }
+        res = res.set_start_node(Self::merged_name(self.start(), &pairs));
         for node in self.end_nodes() {
             let node = Self::merged_name(node, &pairs);
             if res.end_nodes().any(|n| n == node) {
@@ -257,7 +242,7 @@ impl Lgraph {
 
     // if there are edges (p, )ji, qj), (qj, (ji, q), we can replace them with an edge (p, _, q)
     fn merge_diamonds(self) -> (Self, bool) {
-        let mut res = Lgraph::default();
+        let mut res = Self::new(self.start());
         let mut pqs = vec![];
 
         'OUTER: for p in self.nodes() {
@@ -268,7 +253,7 @@ impl Lgraph {
                     || i1.look_ahead().is_some()
                     || i1.output().is_some()
                     || self.is_end_node(q1)
-                    || self.is_start_node(q1)
+                    || self.start() == q1
                 {
                     continue 'OUTER;
                 }
@@ -329,9 +314,6 @@ impl Lgraph {
             }
             res = res.add_edge(from, item, to);
         }
-        for node in self.start_nodes() {
-            res = res.add_start_node(node);
-        }
         for node in self.end_nodes() {
             res = res.add_end_node(node);
         }
@@ -349,9 +331,9 @@ impl Lgraph {
     // Basically we should construct a "uselessness" dependency graph. It splits into multiple
     // connected components, and if a component has no deadend nodes, all edges in it are useless.
     fn useless_brackets(self) -> (Self, bool) {
-        let mut res = Lgraph::default();
+        let mut res = Self::new(self.start());
 
-        let mut dep = StateMachine::new();
+        let mut dep = TransitionScheme::new(0);
         let mut nodes = vec![];
 
         for (from, item, to) in self.edges() {
@@ -429,9 +411,6 @@ impl Lgraph {
                 }
             }
             res = res.add_edge(from, item, to);
-        }
-        for node in self.start_nodes() {
-            res = res.add_start_node(node);
         }
         for node in self.end_nodes() {
             res = res.add_end_node(node);
@@ -518,7 +497,7 @@ impl Lgraph {
 
     // Remove lookahead on edge (p, i, q), if it doesnt impact determinism
     fn useless_lookahead(self) -> (Self, bool) {
-        let mut res = Lgraph::default();
+        let mut res = Self::new(self.start());
         let mut changed = false;
 
         'OUTER: for (from, item, to) in self.edges() {
@@ -545,10 +524,6 @@ impl Lgraph {
 
             changed = true;
             res = res.add_edge(from, item1, to);
-        }
-
-        for node in self.start_nodes() {
-            res = res.add_start_node(node);
         }
         for node in self.end_nodes() {
             res = res.add_end_node(node);
