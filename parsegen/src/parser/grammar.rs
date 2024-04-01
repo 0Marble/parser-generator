@@ -1,6 +1,6 @@
-use std::{collections::VecDeque, fmt::Display, io::Cursor, io::Write, str::FromStr};
+use std::{collections::VecDeque, fmt::Display, str::FromStr};
 
-use crate::tokenizer::Token;
+use crate::{Token, TokenError};
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Production {
@@ -12,6 +12,13 @@ pub struct Production {
 pub enum ProductionFromStrError {
     NoHead,
     NoArrow,
+    InvalidToken(TokenError),
+}
+
+impl From<TokenError> for ProductionFromStrError {
+    fn from(v: TokenError) -> Self {
+        Self::InvalidToken(v)
+    }
 }
 impl Display for ProductionFromStrError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -26,14 +33,14 @@ impl FromStr for Production {
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         let s = s.trim();
         let mut split = s.split_whitespace();
-        let lhs = Token::new(split.next().ok_or_else(|| ProductionFromStrError::NoHead)?);
+        let lhs = Token::new(split.next().ok_or_else(|| ProductionFromStrError::NoHead)?)?;
         let _ = split
             .next()
             .and_then(|a| if a == "->" { Some(()) } else { None })
             .ok_or_else(|| ProductionFromStrError::NoArrow)?;
         let mut rhs = vec![];
         for tok in split {
-            rhs.push(Token::new(tok));
+            rhs.push(Token::new(tok)?);
         }
         Ok(Self::new(lhs, rhs))
     }
@@ -61,12 +68,18 @@ impl Production {
     }
 }
 
-impl<T1: ToString, T2: ToString, I: IntoIterator<Item = T2>> From<(T1, I)> for Production {
-    fn from(value: (T1, I)) -> Self {
-        Self::new(
-            Token::new(value.0),
-            value.1.into_iter().map(Token::new).collect(),
-        )
+impl<T1: ToString, T2: ToString, I: IntoIterator<Item = T2>> TryFrom<(T1, I)> for Production {
+    type Error = TokenError;
+
+    fn try_from(value: (T1, I)) -> Result<Self, Self::Error> {
+        Ok(Self::new(
+            Token::new(value.0)?,
+            value
+                .1
+                .into_iter()
+                .map(Token::new)
+                .collect::<Result<_, _>>()?,
+        ))
     }
 }
 
@@ -81,6 +94,13 @@ pub struct Grammar {
 pub enum GrammarFromStrError {
     ProdError(ProductionFromStrError),
     NoProductions,
+    InvalidToken(TokenError),
+}
+
+impl From<TokenError> for GrammarFromStrError {
+    fn from(v: TokenError) -> Self {
+        Self::InvalidToken(v)
+    }
 }
 
 impl From<ProductionFromStrError> for GrammarFromStrError {
@@ -110,7 +130,7 @@ impl FromStr for Grammar {
             for p in prod_variants {
                 let mut toks = vec![];
                 for t in p.split_whitespace() {
-                    toks.push(Token::new(t));
+                    toks.push(Token::new(t)?);
                 }
                 prods.push(Production::new(start.clone(), toks));
             }
@@ -134,8 +154,8 @@ impl Display for Grammar {
 }
 
 impl Grammar {
-    pub fn new<T: Into<Production>>(prods: impl IntoIterator<Item = T>, start: Token) -> Self {
-        let productions: Vec<_> = prods.into_iter().map(Into::into).collect();
+    pub fn new(productions: impl IntoIterator<Item = Production>, start: Token) -> Self {
+        let productions: Vec<_> = productions.into_iter().collect();
         assert!(productions.len() > 0, "No productions given!");
 
         let mut terminals = vec![];
@@ -154,7 +174,7 @@ impl Grammar {
         };
         assert!(
             !res.is_terminal(start.clone()),
-            "{start} is not a non-terminal for grammar {res}"
+            "Start symbol {start} is a terminal!"
         );
         res
     }
@@ -192,7 +212,7 @@ impl Grammar {
     pub fn start(&self) -> Token {
         self.start.clone()
     }
-    pub fn get_unique_token(&self, base_name: &str) -> Token {
+    pub fn get_unique_token(&self, base_name: &str) -> Result<Token, TokenError> {
         for old_name in self.terminals().chain(self.non_terminals()) {
             if old_name.name() == base_name {
                 return self.get_unique_token(&(base_name.to_string() + "a"));
@@ -725,9 +745,8 @@ impl Grammar {
                             next_stack.push(new_tree);
                         }
                         break;
-                    } else {
-                        continue;
                     }
+                    continue;
                 }
 
                 if !had_nonterms {
@@ -754,16 +773,16 @@ mod tests {
     #[test]
     fn from_string() {
         let g = Grammar::new(
-            [
-                ("S", vec!["E"]),
-                ("E", vec!["T", "add", "E"]),
-                ("E", vec!["T"]),
-                ("T", vec!["F", "mul", "T"]),
-                ("T", vec!["F"]),
-                ("F", vec!["id"]),
-                ("F", vec!["lp", "E", "rp"]),
+            vec![
+                ("S", vec!["E"]).try_into().unwrap(),
+                ("E", vec!["T", "add", "E"]).try_into().unwrap(),
+                ("E", vec!["T"]).try_into().unwrap(),
+                ("T", vec!["F", "mul", "T"]).try_into().unwrap(),
+                ("T", vec!["F"]).try_into().unwrap(),
+                ("F", vec!["id"]).try_into().unwrap(),
+                ("F", vec!["lp", "E", "rp"]).try_into().unwrap(),
             ],
-            Token::new("S"),
+            Token::new("S").unwrap(),
         );
         assert_eq!(Ok(g), Grammar::from_str(expr_grammar()));
     }
@@ -772,27 +791,27 @@ mod tests {
     fn basic() {
         let g = Grammar::from_str(expr_grammar()).unwrap();
         assert_eq!(g.start().name(), "S");
-        assert_eq!(g.productions_for(Token::new("S")).count(), 1);
-        assert_eq!(g.productions_for(Token::new("E")).count(), 2);
-        assert_eq!(g.productions_for(Token::new("T")).count(), 2);
-        assert_eq!(g.productions_for(Token::new("F")).count(), 2);
-        assert!(g.is_terminal(Token::new("lp")));
-        assert!(g.is_terminal(Token::new("rp")));
-        assert!(g.is_terminal(Token::new("add")));
-        assert!(g.is_terminal(Token::new("mul")));
-        assert!(g.is_terminal(Token::new("id")));
-        assert!(!g.is_terminal(Token::new("E")));
-        assert!(!g.is_terminal(Token::new("T")));
-        assert!(!g.is_terminal(Token::new("F")));
+        assert_eq!(g.productions_for(Token::new("S").unwrap()).count(), 1);
+        assert_eq!(g.productions_for(Token::new("E").unwrap()).count(), 2);
+        assert_eq!(g.productions_for(Token::new("T").unwrap()).count(), 2);
+        assert_eq!(g.productions_for(Token::new("F").unwrap()).count(), 2);
+        assert!(g.is_terminal(Token::new("lp").unwrap()));
+        assert!(g.is_terminal(Token::new("rp").unwrap()));
+        assert!(g.is_terminal(Token::new("add").unwrap()));
+        assert!(g.is_terminal(Token::new("mul").unwrap()));
+        assert!(g.is_terminal(Token::new("id").unwrap()));
+        assert!(!g.is_terminal(Token::new("E").unwrap()));
+        assert!(!g.is_terminal(Token::new("T").unwrap()));
+        assert!(!g.is_terminal(Token::new("F").unwrap()));
 
         let g = Grammar::from_str(expr_grammar_ll()).unwrap();
         assert_eq!(g.start().name(), "S");
-        assert_eq!(g.productions_for(Token::new("S")).count(), 1);
-        assert_eq!(g.productions_for(Token::new("E")).count(), 1);
-        assert_eq!(g.productions_for(Token::new("Ea")).count(), 2);
-        assert_eq!(g.productions_for(Token::new("T")).count(), 1);
-        assert_eq!(g.productions_for(Token::new("Ta")).count(), 2);
-        assert_eq!(g.productions_for(Token::new("F")).count(), 2);
+        assert_eq!(g.productions_for(Token::new("S").unwrap()).count(), 1);
+        assert_eq!(g.productions_for(Token::new("E").unwrap()).count(), 1);
+        assert_eq!(g.productions_for(Token::new("Ea").unwrap()).count(), 2);
+        assert_eq!(g.productions_for(Token::new("T").unwrap()).count(), 1);
+        assert_eq!(g.productions_for(Token::new("Ta").unwrap()).count(), 2);
+        assert_eq!(g.productions_for(Token::new("F").unwrap()).count(), 2);
     }
 
     #[test]
@@ -801,25 +820,25 @@ mod tests {
         let first = g.first();
 
         let c = HashSet::from([
-            TokenOrEps::Token(Token::new("id")),
-            TokenOrEps::Token(Token::new("lp")),
+            TokenOrEps::Token(Token::new("id").unwrap()),
+            TokenOrEps::Token(Token::new("lp").unwrap()),
         ]);
         let actual_first = HashMap::from([
-            (Token::new("S"), c.clone()),
-            (Token::new("E"), c.clone()),
-            (Token::new("T"), c.clone()),
-            (Token::new("F"), c.clone()),
+            (Token::new("S").unwrap(), c.clone()),
+            (Token::new("E").unwrap(), c.clone()),
+            (Token::new("T").unwrap(), c.clone()),
+            (Token::new("F").unwrap(), c.clone()),
             (
-                Token::new("id"),
-                HashSet::from([TokenOrEps::Token(Token::new("id"))]),
+                Token::new("id").unwrap(),
+                HashSet::from([TokenOrEps::Token(Token::new("id").unwrap())]),
             ),
             (
-                Token::new("lp"),
-                HashSet::from([TokenOrEps::Token(Token::new("lp"))]),
+                Token::new("lp").unwrap(),
+                HashSet::from([TokenOrEps::Token(Token::new("lp").unwrap())]),
             ),
             (
-                Token::new("rp"),
-                HashSet::from([TokenOrEps::Token(Token::new("rp"))]),
+                Token::new("rp").unwrap(),
+                HashSet::from([TokenOrEps::Token(Token::new("rp").unwrap())]),
             ),
         ]);
         for (nt, a) in actual_first {
@@ -836,40 +855,61 @@ mod tests {
             (
                 "E",
                 HashSet::from([
-                    TokenOrEps::Token(Token::new("lp")),
-                    TokenOrEps::Token(Token::new("id")),
+                    TokenOrEps::Token(Token::new("lp").unwrap()),
+                    TokenOrEps::Token(Token::new("id").unwrap()),
                 ]),
             ),
             (
                 "Ea",
-                HashSet::from([TokenOrEps::Token(Token::new("add")), TokenOrEps::Eps]),
+                HashSet::from([
+                    TokenOrEps::Token(Token::new("add").unwrap()),
+                    TokenOrEps::Eps,
+                ]),
             ),
             (
                 "T",
                 HashSet::from([
-                    TokenOrEps::Token(Token::new("lp")),
-                    TokenOrEps::Token(Token::new("id")),
+                    TokenOrEps::Token(Token::new("lp").unwrap()),
+                    TokenOrEps::Token(Token::new("id").unwrap()),
                 ]),
             ),
             (
                 "Ta",
-                HashSet::from([TokenOrEps::Token(Token::new("mul")), TokenOrEps::Eps]),
+                HashSet::from([
+                    TokenOrEps::Token(Token::new("mul").unwrap()),
+                    TokenOrEps::Eps,
+                ]),
             ),
             (
                 "F",
                 HashSet::from([
-                    TokenOrEps::Token(Token::new("lp")),
-                    TokenOrEps::Token(Token::new("id")),
+                    TokenOrEps::Token(Token::new("lp").unwrap()),
+                    TokenOrEps::Token(Token::new("id").unwrap()),
                 ]),
             ),
-            ("id", HashSet::from([TokenOrEps::Token(Token::new("id"))])),
-            ("lp", HashSet::from([TokenOrEps::Token(Token::new("lp"))])),
-            ("rp", HashSet::from([TokenOrEps::Token(Token::new("rp"))])),
+            (
+                "id",
+                HashSet::from([TokenOrEps::Token(Token::new("id").unwrap())]),
+            ),
+            (
+                "lp",
+                HashSet::from([TokenOrEps::Token(Token::new("lp").unwrap())]),
+            ),
+            (
+                "rp",
+                HashSet::from([TokenOrEps::Token(Token::new("rp").unwrap())]),
+            ),
         ]);
 
         for (nt, a) in actual_first {
             assert_eq!(
-                HashSet::from_iter(first.first(Token::new(nt)).unwrap().iter().cloned()),
+                HashSet::from_iter(
+                    first
+                        .first(Token::new(nt).unwrap())
+                        .unwrap()
+                        .iter()
+                        .cloned()
+                ),
                 a
             );
         }
@@ -885,27 +925,30 @@ mod tests {
             (
                 "T",
                 vec![
-                    TokenOrEnd::Token(Token::new("add")),
-                    TokenOrEnd::Token(Token::new("rp")),
+                    TokenOrEnd::Token(Token::new("add").unwrap()),
+                    TokenOrEnd::Token(Token::new("rp").unwrap()),
                     TokenOrEnd::End,
                 ],
             ),
             (
                 "F",
                 vec![
-                    TokenOrEnd::Token(Token::new("mul")),
-                    TokenOrEnd::Token(Token::new("add")),
-                    TokenOrEnd::Token(Token::new("rp")),
+                    TokenOrEnd::Token(Token::new("mul").unwrap()),
+                    TokenOrEnd::Token(Token::new("add").unwrap()),
+                    TokenOrEnd::Token(Token::new("rp").unwrap()),
                     TokenOrEnd::End,
                 ],
             ),
             (
                 "E",
-                vec![TokenOrEnd::End, TokenOrEnd::Token(Token::new("rp"))],
+                vec![
+                    TokenOrEnd::End,
+                    TokenOrEnd::Token(Token::new("rp").unwrap()),
+                ],
             ),
         ]);
         for (nt, f) in actual_follow {
-            let tok = Token::new(nt);
+            let tok = Token::new(nt).unwrap();
             let mut f0 = HashSet::new();
             for t in follow.follow(tok).unwrap().iter().cloned() {
                 f0.insert(t);
@@ -924,41 +967,47 @@ mod tests {
             ("S", vec![TokenOrEnd::End]),
             (
                 "Ea",
-                vec![TokenOrEnd::End, TokenOrEnd::Token(Token::new("rp"))],
+                vec![
+                    TokenOrEnd::End,
+                    TokenOrEnd::Token(Token::new("rp").unwrap()),
+                ],
             ),
             (
                 "T",
                 vec![
-                    TokenOrEnd::Token(Token::new("add")),
-                    TokenOrEnd::Token(Token::new("rp")),
+                    TokenOrEnd::Token(Token::new("add").unwrap()),
+                    TokenOrEnd::Token(Token::new("rp").unwrap()),
                     TokenOrEnd::End,
                 ],
             ),
             (
                 "Ta",
                 vec![
-                    TokenOrEnd::Token(Token::new("add")),
-                    TokenOrEnd::Token(Token::new("rp")),
+                    TokenOrEnd::Token(Token::new("add").unwrap()),
+                    TokenOrEnd::Token(Token::new("rp").unwrap()),
                     TokenOrEnd::End,
                 ],
             ),
             (
                 "F",
                 vec![
-                    TokenOrEnd::Token(Token::new("mul")),
-                    TokenOrEnd::Token(Token::new("add")),
-                    TokenOrEnd::Token(Token::new("rp")),
+                    TokenOrEnd::Token(Token::new("mul").unwrap()),
+                    TokenOrEnd::Token(Token::new("add").unwrap()),
+                    TokenOrEnd::Token(Token::new("rp").unwrap()),
                     TokenOrEnd::End,
                 ],
             ),
             (
                 "E",
-                vec![TokenOrEnd::End, TokenOrEnd::Token(Token::new("rp"))],
+                vec![
+                    TokenOrEnd::End,
+                    TokenOrEnd::Token(Token::new("rp").unwrap()),
+                ],
             ),
         ]);
 
         for (nt, f) in actual_follow {
-            let tok = Token::new(nt);
+            let tok = Token::new(nt).unwrap();
             let mut f0 = HashSet::new();
             for t in follow.follow(tok).unwrap().iter().cloned() {
                 f0.insert(t);

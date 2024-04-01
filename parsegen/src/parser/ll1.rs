@@ -51,7 +51,7 @@ impl Lgraph {
             }
         }
 
-        let mut ll1 = Self::default();
+        let mut ll1 = Self::new(0);
         // generate starts and ends of each section responsible for a production
         // for prod[i] section should look like
         // (4*i) -(i-> (4*i+1) -production-> (4*i+2) -)i-> (4*i+3)
@@ -204,7 +204,7 @@ impl Lgraph {
         let start_node = node_count;
         let end_node = node_count + 1;
         node_count += 2;
-        ll1 = ll1.add_start_node(start_node);
+        ll1 = ll1.set_start_node(start_node);
         ll1 = ll1.add_end_node(end_node);
         let start_symbol = grammar.start();
         for (i, prod) in grammar.productions().enumerate() {
