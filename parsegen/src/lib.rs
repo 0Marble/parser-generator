@@ -1,5 +1,6 @@
 use std::{fmt::Display, rc::Rc};
 
+pub mod automata;
 pub mod codegen;
 pub mod lexer;
 pub mod parser;
