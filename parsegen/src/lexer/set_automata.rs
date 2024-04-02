@@ -7,34 +7,46 @@ use super::charset::CharSet;
 pub type SetAutomata = TransitionScheme<Option<CharSet>>;
 
 impl SetAutomata {
-    fn lambda_closure(&self, from: usize) -> impl Iterator<Item = (CharSet, usize)> + '_ {
-        let mut nodes: Vec<_> = self.nodes().collect();
-        nodes.sort();
-        let start = nodes.binary_search(&from).unwrap();
-        let mut stack = vec![start];
-        let mut visited = vec![false; nodes.len()];
-        let mut closure = vec![CharSet::empty(); nodes.len()];
+    pub fn remove_nones(&self) -> Self {
+        let mut res = Self::new(self.start());
 
-        while let Some(from) = stack.pop() {
-            for (_, set, to) in self.edges_from(nodes[from]) {
-                let j = nodes.binary_search(&to).unwrap();
-                if visited[j] {
-                    continue;
-                }
-                visited[j] = true;
-                match set {
-                    Some(set) => closure[j] = closure[j].union(set),
-                    None => {
-                        stack.push(j);
-                    }
+        for node in self.nodes() {
+            if self.is_end_node(node) {
+                res = res.add_end(node);
+            }
+
+            for (set, to, end) in self.lambda_closure(node) {
+                res = res.add_edge(node, Some(set.clone()), to);
+                if end {
+                    res = res.add_end(node);
                 }
             }
         }
 
-        closure
-            .into_iter()
-            .enumerate()
-            .map(move |(i, set)| (set, nodes[i]))
+        res.remove_unreachable()
+    }
+
+    fn lambda_closure(&self, node: usize) -> impl Iterator<Item = (&CharSet, usize, bool)> {
+        let mut stack = vec![(node, false)];
+
+        let mut res = vec![];
+        let mut visited = HashSet::new();
+        while let Some((from, end)) = stack.pop() {
+            for (_, set, to) in self.edges_from(from) {
+                if !visited.insert(to) {
+                    continue;
+                }
+
+                match set.as_ref() {
+                    Some(set) => {
+                        res.push((set, to, end || self.is_end_node(from)));
+                    }
+                    None => stack.push((to, end || self.is_end_node(from))),
+                }
+            }
+        }
+
+        res.into_iter()
     }
 
     pub fn determine(&self) -> (Self, Vec<Vec<usize>>) {
@@ -44,7 +56,10 @@ impl SetAutomata {
 
         while let Some(node) = stack.pop() {
             let mut joined_outs = OwnedSubsets::empty();
-            for (set, to) in subsets[node].iter().flat_map(|n| self.lambda_closure(*n)) {
+            for (set, to) in subsets[node].iter().flat_map(|n| {
+                self.edges_from(*n)
+                    .map(|(_, set, to)| (set.as_ref().unwrap(), to))
+            }) {
                 joined_outs.add(to, &set);
             }
 
@@ -138,6 +153,18 @@ impl SetAutomata {
         }
 
         res
+    }
+
+    pub fn complement(&self) -> Self {
+        let s = self.add_dead_state();
+        let mut res = Self::new(s.start());
+        for (from, item, to) in s.edges() {
+            res = res.add_edge(from, item.clone(), to);
+        }
+        for end in s.dead_states() {
+            res = res.add_end(end);
+        }
+        res.remove_dead_states()
     }
 
     pub fn minimize(&self) -> (Self, Vec<(usize, usize)>) {
@@ -248,7 +275,7 @@ impl SetAutomata {
         (names, dist)
     }
 
-    fn remove_unreachable(&self) -> Self {
+    pub fn remove_unreachable(&self) -> Self {
         let mut res = Self::new(self.start());
         let mut stack = vec![self.start()];
         let mut visited = HashSet::new();
@@ -271,7 +298,29 @@ impl SetAutomata {
         res
     }
 
-    fn add_dead_state(&self) -> Self {
+    pub fn remove_dead_states(&self) -> Self {
+        let dead: HashSet<_> = self.dead_states().collect();
+        if dead.contains(&self.start()) {
+            return Self::new(0);
+        }
+
+        let mut res = Self::new(self.start());
+        for (from, item, to) in self.edges() {
+            if dead.contains(&from) || dead.contains(&to) {
+                continue;
+            }
+
+            res = res.add_edge(from, item.clone(), to);
+        }
+
+        for end in self.ends() {
+            res = res.add_end(end);
+        }
+
+        res
+    }
+
+    pub fn add_dead_state(&self) -> Self {
         let dead = self.nodes().max().unwrap() + 1;
         let mut res = Self::new(self.start());
         res = res.add_edge(dead, Some(CharSet::full()), dead);
@@ -293,6 +342,22 @@ impl SetAutomata {
         }
 
         res
+    }
+
+    pub fn dead_states(&self) -> impl Iterator<Item = usize> + '_ {
+        let mut visited: HashSet<_> = self.ends().collect();
+        let mut stack: Vec<_> = self.ends().collect();
+
+        while let Some(node) = stack.pop() {
+            for (prev, _, _) in self.edges_to(node) {
+                if !visited.insert(prev) {
+                    continue;
+                }
+                stack.push(prev);
+            }
+        }
+
+        self.nodes().filter(move |n| !visited.contains(n))
     }
 }
 
@@ -323,6 +388,7 @@ impl OwnedSubsets {
             // 2. a min max b: [a,min):old, [min,max]:old+new, (max,b]:old
             // 3. a min b max: [a,min):old, [min,b]:old+new, (b,max]:new
             // 4. [a, b] does not intersect [min, max]: [a, b]:old
+            // 5. min a b max: [min,a):new, [a,b]:old+new, (b,max]:new
             if a > max && !put {
                 self.add_closed(new, min, max);
                 put = true;
@@ -359,6 +425,14 @@ impl OwnedSubsets {
                 } else {
                     put = true;
                 }
+            } else if a >= min && b <= max {
+                self.add_cl_op(new, min, a);
+                self.add_closed(new_old, a, b);
+                if max == b {
+                    put = true;
+                } else {
+                    min = b + 1;
+                }
             } else {
                 panic!("Should be unreachable: ({min},{max}),({a},{b})");
             }
@@ -381,14 +455,14 @@ impl OwnedSubsets {
     fn add_cl_op(&mut self, owner: usize, min: u32, max: u32) {
         if min == max {
         } else {
-            self.validate_edge(owner, min, max);
+            self.validate_edge(owner, min, max - 1);
             self.ranges.push((owner, min, max - 1));
         }
     }
     fn add_op_cl(&mut self, owner: usize, min: u32, max: u32) {
         if min == max {
         } else {
-            self.validate_edge(owner, min, max);
+            self.validate_edge(owner, min + 1, max);
             self.ranges.push((owner, min + 1, max));
         }
     }
@@ -508,62 +582,71 @@ mod tests {
         let a = SetAutomata::new(0).add_edge(0, one_set('a'), 1).add_end(1);
         let b = SetAutomata::new(0).add_edge(0, one_set('b'), 1).add_end(1);
 
+        let c = SetAutomata::new(0);
+        let c = c.remove_nones().determine().0.minimize().0;
+        for (w, res) in [("", false), ("a", false)] {
+            assert_eq!(traverse(&c, w.chars()), res, "{w}");
+        }
+
+        let c = SetAutomata::new(0).add_end(0);
+        let c = c.remove_nones();
+        let c = c.determine().0;
+        let c = c.minimize().0;
+        for (w, res) in [("", true), ("a", false)] {
+            assert_eq!(traverse(&c, w.chars()), res, "{w}");
+        }
+
         let c = a.union(&b);
-        let c = c.determine().0.minimize().0;
-        for (w, res) in [
-            (vec!['a'], true),
-            (vec!['b'], true),
-            (vec!['c'], false),
-            (vec!['a', 'a'], false),
-        ] {
-            assert_eq!(traverse(&c, w), res);
+        let c = c.remove_nones().determine().0.minimize().0;
+        for (w, res) in [("a", true), ("b", true), ("c", false), ("aa", false)] {
+            assert_eq!(traverse(&c, w.chars()), res, "{w}");
         }
 
         let c = a.concat(&b);
-        let c = c.determine().0.minimize().0;
+        let c = c.remove_nones();
+        let c = c.determine().0;
+        let c = c.minimize().0;
         for (w, res) in [
-            (vec!['a'], false),
-            (vec!['b'], false),
-            (vec!['c'], false),
-            (vec!['a', 'b'], true),
-            (vec!['a', 'b', 'b'], false),
+            ("a", false),
+            ("b", false),
+            ("c", false),
+            ("ab", true),
+            ("abb", false),
         ] {
-            assert_eq!(traverse(&c, w), res);
+            assert_eq!(traverse(&c, w.chars()), res, "{w}");
         }
 
         let c = a.star();
-        let c = c.determine().0.minimize().0;
+        let c = c.remove_nones();
+        let c = c.determine().0;
+        let c = c.minimize().0;
         for (w, res) in [
-            (vec![], true),
-            (vec!['a'], true),
-            (vec!['b'], false),
-            (vec!['c'], false),
-            (vec!['a', 'a'], true),
-            (vec!['a', 'a', 'a'], true),
-            (vec!['a', 'a', 'a', 'a', 'a', 'a'], true),
-            (vec!['a', 'a', 'a', 'a', 'a', 'b'], false),
+            ("", true),
+            ("a", true),
+            ("b", false),
+            ("c", false),
+            ("aa", true),
+            ("aaa", true),
+            ("aaaaaa", true),
+            ("aaaaab", false),
         ] {
-            assert_eq!(traverse(&c, w), res);
+            assert_eq!(traverse(&c, w.chars()), res, "{w}");
         }
 
-        let c = a
-            .star()
-            .union(&b.concat(&b).concat(&b))
-            .star()
-            .determine()
-            .0
-            .minimize()
-            .0;
+        let c = a.star().union(&b.concat(&b).concat(&b)).star();
+        let c = c.remove_nones();
+        let c = c.determine().0;
+        let c = c.minimize().0;
         for (w, res) in [
-            (vec!['a'], true),
-            (vec!['b'], false),
-            (vec!['c'], false),
-            (vec!['a', 'a'], true),
-            (vec!['a', 'a', 'a'], true),
-            (vec!['b', 'b', 'b', 'a', 'a', 'b', 'b', 'b'], true),
-            (vec!['b', 'b'], false),
+            ("a", true),
+            ("b", false),
+            ("c", false),
+            ("aa", true),
+            ("aaa", true),
+            ("bbbaabbb", true),
+            ("bb", false),
         ] {
-            assert_eq!(traverse(&c, w), res);
+            assert_eq!(traverse(&c, w.chars()), res, "{w}");
         }
     }
 }

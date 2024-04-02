@@ -273,24 +273,21 @@ impl Lgraph {
         self
     }
 
-    fn edge_iter<'a, 'b>(
-        it: impl Iterator<Item = (usize, &'a Item, usize)> + 'b,
-    ) -> impl Iterator<Item = (usize, Item, usize)> + 'b + 'a
-    where
-        'b: 'a,
-    {
-        it.map(|(from, item, to)| (from, item.clone(), to))
-    }
-
     pub fn edges(&self) -> impl Iterator<Item = (usize, Item, usize)> + '_ {
-        Self::edge_iter(self.inner.edges())
+        self.inner
+            .edges()
+            .map(|(from, item, to)| (from, item.clone(), to))
     }
 
     pub fn edges_from(&self, n: usize) -> impl Iterator<Item = (usize, Item, usize)> + '_ {
-        Self::edge_iter(self.inner.edges_from(n))
+        self.inner
+            .edges_from(n)
+            .map(|(from, item, to)| (from, item.clone(), to))
     }
     pub fn edges_to(&self, n: usize) -> impl Iterator<Item = (usize, Item, usize)> + '_ {
-        Self::edge_iter(self.inner.edges_to(n))
+        self.inner
+            .edges_to(n)
+            .map(|(from, item, to)| (from, item.clone(), to))
     }
 
     pub fn end_nodes(&self) -> impl Iterator<Item = usize> + '_ {
@@ -332,6 +329,10 @@ impl Lgraph {
         }
 
         None
+    }
+
+    pub fn has_node(&self, node: usize) -> bool {
+        self.inner.has_node(node)
     }
 }
 
