@@ -189,8 +189,9 @@ impl Lgraph {
     // merge two nodes if they have an empty edge between them, and all the other output edges
     // respect determinism
     fn empty_edges(self) -> (Self, bool) {
-        let mut res = Self::new(0);
         let mut next_node = self.nodes().max().unwrap_or_default() + 1;
+        let mut res = Self::new(next_node);
+        next_node += 1;
         let mut pairs = vec![];
         'OUTER: for (from, item, to) in self.edges() {
             if !item.is_empty()
@@ -208,7 +209,6 @@ impl Lgraph {
                     }
                 }
             }
-            // writeln!(std::io::stderr(), "({},{}) -> {}", from, to, next_node).unwrap();
             pairs.push((from, to, next_node));
             next_node += 1;
         }
@@ -222,7 +222,7 @@ impl Lgraph {
             }
             let from = Self::merged_name(from, &pairs);
             let to = Self::merged_name(to, &pairs);
-            if res.edges_from(from).any(|(_, it, t)| it == item && t == to) {
+            if res.has_node(from) && res.edges_from(from).any(|(_, it, t)| it == item && t == to) {
                 continue;
             }
             res = res.add_edge(from, item, to);

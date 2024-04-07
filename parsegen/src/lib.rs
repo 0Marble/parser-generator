@@ -1,5 +1,6 @@
 use std::{fmt::Display, rc::Rc};
 
+pub mod automata;
 pub mod codegen;
 pub mod lexer;
 pub mod parser;
@@ -76,25 +77,34 @@ impl<I> TransitionScheme<I> {
     }
 
     pub fn edges_from(&self, node: usize) -> impl Iterator<Item = (usize, &I, usize)> {
-        self.node_idx(node).into_iter().flat_map(move |i| {
-            self.edges[i]
-                .iter()
-                .cloned()
-                .map(move |(item, to)| (node, &self.items[item], self.nodes[to]))
-        })
+        self.node_idx(node)
+            .map(|from| {
+                self.edges[from]
+                    .iter()
+                    .cloned()
+                    .map(move |(item, to)| (self.nodes[from], &self.items[item], self.nodes[to]))
+            })
+            .into_iter()
+            .flatten()
     }
 
     pub fn edges_to(&self, node: usize) -> impl Iterator<Item = (usize, &I, usize)> {
-        self.node_idx(node).into_iter().flat_map(move |i| {
-            self.back[i]
-                .iter()
-                .cloned()
-                .map(move |(from, item)| (self.nodes[from], &self.items[item], node))
-        })
+        self.node_idx(node)
+            .map(|to| {
+                self.back[to]
+                    .iter()
+                    .cloned()
+                    .map(move |(from, item)| (self.nodes[from], &self.items[item], self.nodes[to]))
+            })
+            .into_iter()
+            .flatten()
     }
 
     pub fn nodes(&self) -> impl Iterator<Item = usize> + '_ {
         self.nodes.iter().cloned()
+    }
+    pub fn has_node(&self, node: usize) -> bool {
+        self.node_idx(node).is_some()
     }
 
     pub fn start(&self) -> usize {
@@ -114,12 +124,7 @@ impl<I> TransitionScheme<I> {
     }
 
     fn node_idx(&self, node: usize) -> Option<usize> {
-        let (i, _) = self
-            .nodes
-            .iter()
-            .cloned()
-            .enumerate()
-            .find(|(_, n)| *n == node)?;
+        let (i, _) = self.nodes.iter().enumerate().find(|(_, n)| **n == node)?;
         Some(i)
     }
     fn add_node_get_idx(&mut self, node: usize) -> usize {
@@ -159,6 +164,14 @@ impl<I> TransitionScheme<I> {
 
     pub fn set_start(mut self, node: usize) -> Self {
         self.start = self.add_node_get_idx(node);
+        self
+    }
+
+    pub fn rename(mut self, f: impl Fn(usize) -> usize) -> Self {
+        for node in &mut self.nodes {
+            *node = f(*node);
+        }
+
         self
     }
 }
