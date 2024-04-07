@@ -133,6 +133,10 @@ impl Lexer {
             .map(|(_, tok)| tok.clone())
     }
 
+    pub fn tokens(&self) -> impl Iterator<Item = (usize, Token)> + '_ {
+        self.tokens.iter().cloned()
+    }
+
     pub fn start(&self) -> usize {
         self.dfa.start()
     }

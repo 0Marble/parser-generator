@@ -152,6 +152,11 @@ impl Item {
     pub fn look_ahead(&self) -> Option<Lookahead> {
         self.look_ahead.clone()
     }
+    pub fn tok_lk(&self) -> impl Iterator<Item = TokenOrEnd> {
+        self.tok()
+            .into_iter()
+            .chain(self.look_ahead().into_iter().flatten())
+    }
 
     pub fn is_distinguishable(&self, other: &Self) -> bool {
         let a_it = self
