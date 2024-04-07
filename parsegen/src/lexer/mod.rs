@@ -1,3 +1,5 @@
+use std::fmt::Display;
+
 use crate::Token;
 
 use self::{charset::CharSet, regex::Regex, set_automata::SetAutomata};
@@ -12,27 +14,60 @@ pub struct Lexer {
     dead_states: Vec<usize>,
 }
 
+impl Display for Lexer {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        writeln!(f, "digraph {{\nnode [shape=circle];\nQ1 [style=invisible, height=0, width=0, fixedsize=true];")?;
+        writeln!(f, "Q1 -> {};", self.start())?;
+        for (from, set, to) in self.edges() {
+            writeln!(f, "{} -> {} [label=\"{}\"];", from, to, set)?;
+        }
+
+        for n in self.ends() {
+            writeln!(f, "{n} [shape=\"doublecircle\"]; ")?;
+        }
+
+        for (node, tok) in self.tokens.iter().rev() {
+            writeln!(f, "{node} [label=\"{tok}\"];")?;
+        }
+        for dead in self.dead_states() {
+            writeln!(f, "{dead} [label=\"☠\"];")?;
+        }
+
+        writeln!(f, "}}")
+    }
+}
+
 impl Lexer {
     pub fn new(regexes: impl IntoIterator<Item = (Regex, Token)>) -> Self {
         let mut nfa = SetAutomata::new(0);
-        let mut offset = 1;
         let mut tokens = vec![];
 
         for (rg, tok) in regexes {
-            let rg_nfa = rg.to_nfa().remove_nones().rename(|n| n + offset);
+            let rg_nfa = rg.to_nfa().determine().0.minimize(false).0;
+            std::fs::write(format!("tests/lexer_nfa_{tok}.dot"), rg_nfa.to_string()).unwrap();
+            let t = nfa.nodes().max().unwrap_or_default() + 1;
+            let (new_nfa, new_names) = nfa.union(&rg_nfa);
+            nfa = new_nfa;
             for end in rg_nfa.ends() {
-                tokens.push((end, tok.clone()));
-                nfa = nfa.add_end(end);
+                let node = if end == rg_nfa.start() {
+                    nfa.start()
+                } else {
+                    end + t
+                };
+                assert_eq!(
+                    new_names
+                        .iter()
+                        .filter(|(old, _)| *old == end)
+                        .map(|(_, x)| *x)
+                        .collect::<Vec<_>>(),
+                    vec![node],
+                );
+                tokens.push((node, tok.clone()));
             }
-            offset += rg_nfa.nodes().max().unwrap() + 1;
-            for (from, item, to) in rg_nfa.edges() {
-                nfa = nfa.add_edge(from, item.clone(), to);
-            }
-            nfa = nfa.add_edge(0, None, rg_nfa.start());
         }
 
-        let (dfa, dfa_nodes) = nfa.remove_nones().determine();
-        let (mdfa, mdfa_nodes) = dfa.minimize();
+        let (dfa, dfa_nodes) = nfa.determine();
+        let (mdfa, mdfa_nodes) = dfa.minimize(true);
         println!("{tokens:?}\n{dfa_nodes:?}\n{mdfa_nodes:?}\n");
         std::fs::write("tests/lexer_nfa.dot", nfa.to_string()).unwrap();
         std::fs::write("tests/lexer_dfa.dot", dfa.to_string()).unwrap();
@@ -40,18 +75,21 @@ impl Lexer {
 
         let mut new_tokens = vec![];
         for (old_node, tok) in tokens {
-            let (dfa_node, _) = dfa_nodes
+            for (dfa_node, _) in dfa_nodes
                 .iter()
                 .enumerate()
-                .find(|(_, set)| set.contains(&old_node))
-                .unwrap();
-            let (_, mdfa_node) = mdfa_nodes.iter().find(|(n, _)| *n == dfa_node).unwrap();
-            new_tokens.push((mdfa_node + 1, tok));
+                .filter(|(_, set)| set.contains(&old_node))
+            {
+                for (_, mdfa_node) in mdfa_nodes.iter().filter(|(n, _)| *n == dfa_node) {
+                    new_tokens.push((*mdfa_node, tok.clone()));
+                }
+            }
         }
+        println!("{new_tokens:?}");
 
         Lexer {
             dead_states: mdfa.dead_states().collect(),
-            dfa: mdfa,
+            dfa: mdfa.remove_unreachable(),
             tokens: new_tokens,
         }
     }
@@ -61,21 +99,19 @@ impl Lexer {
     }
 
     pub fn edges(&self) -> impl Iterator<Item = (usize, &CharSet, usize)> {
-        self.dfa
-            .edges()
-            .map(|(from, set, to)| (from, set.as_ref().unwrap(), to))
+        self.dfa.edges().map(|(from, set, to)| (from, set, to))
     }
 
     pub fn edges_from(&self, node: usize) -> impl Iterator<Item = (usize, &CharSet, usize)> {
         self.dfa
             .edges_from(node)
-            .map(|(from, set, to)| (from, set.as_ref().unwrap(), to))
+            .map(|(from, set, to)| (from, set, to))
     }
 
     pub fn edges_to(&self, node: usize) -> impl Iterator<Item = (usize, &CharSet, usize)> {
         self.dfa
             .edges_to(node)
-            .map(|(from, set, to)| (from, set.as_ref().unwrap(), to))
+            .map(|(from, set, to)| (from, set, to))
     }
 
     pub fn ends(&self) -> impl Iterator<Item = usize> + '_ {

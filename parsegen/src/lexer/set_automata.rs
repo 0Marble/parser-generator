@@ -4,51 +4,9 @@ use crate::TransitionScheme;
 
 use super::charset::CharSet;
 
-pub type SetAutomata = TransitionScheme<Option<CharSet>>;
+pub type SetAutomata = TransitionScheme<CharSet>;
 
 impl SetAutomata {
-    pub fn remove_nones(&self) -> Self {
-        let mut res = Self::new(self.start());
-
-        for node in self.nodes() {
-            if self.is_end_node(node) {
-                res = res.add_end(node);
-            }
-
-            for (set, to, end) in self.lambda_closure(node) {
-                res = res.add_edge(node, Some(set.clone()), to);
-                if end {
-                    res = res.add_end(node);
-                }
-            }
-        }
-
-        res.remove_unreachable()
-    }
-
-    fn lambda_closure(&self, node: usize) -> impl Iterator<Item = (&CharSet, usize, bool)> {
-        let mut stack = vec![(node, false)];
-
-        let mut res = vec![];
-        let mut visited = HashSet::new();
-        while let Some((from, end)) = stack.pop() {
-            for (_, set, to) in self.edges_from(from) {
-                if !visited.insert(to) {
-                    continue;
-                }
-
-                match set.as_ref() {
-                    Some(set) => {
-                        res.push((set, to, end || self.is_end_node(from)));
-                    }
-                    None => stack.push((to, end || self.is_end_node(from))),
-                }
-            }
-        }
-
-        res.into_iter()
-    }
-
     pub fn determine(&self) -> (Self, Vec<Vec<usize>>) {
         let mut res = Self::new(0);
         let mut subsets = vec![vec![self.start()]];
@@ -56,24 +14,24 @@ impl SetAutomata {
 
         while let Some(node) = stack.pop() {
             let mut joined_outs = OwnedSubsets::empty();
-            for (set, to) in subsets[node].iter().flat_map(|n| {
-                self.edges_from(*n)
-                    .map(|(_, set, to)| (set.as_ref().unwrap(), to))
-            }) {
+            for (set, to) in subsets[node]
+                .iter()
+                .flat_map(|n| self.edges_from(*n).map(|(_, set, to)| (set, to)))
+            {
                 joined_outs.add(to, &set);
             }
 
             'OUTER: for (to_subset, set) in joined_outs.into_subsets() {
                 for (i, existing_subset) in subsets.iter().enumerate() {
                     if existing_subset == &to_subset {
-                        res = res.add_edge(node, Some(set), i);
+                        res = res.add_edge(node, set, i);
                         continue 'OUTER;
                     }
                 }
 
                 let new_node = subsets.len();
                 subsets.push(to_subset);
-                res = res.add_edge(node, Some(set), new_node);
+                res = res.add_edge(node, set, new_node);
                 stack.push(new_node);
             }
         }
@@ -91,11 +49,6 @@ impl SetAutomata {
         for node in self.nodes() {
             let mut seen = CharSet::empty();
             for (_, items, _) in self.edges_from(node) {
-                let items = if let Some(items) = items {
-                    items
-                } else {
-                    return false;
-                };
                 if !seen.intersect(items).is_empty() {
                     return false;
                 }
@@ -105,54 +58,115 @@ impl SetAutomata {
         true
     }
 
-    pub fn union(&self, other: &Self) -> Self {
-        let a_max = self.nodes().max().unwrap();
-        let mut res = Self::new(0);
-        for (from, set, to) in self.edges() {
-            res = res.add_edge(from + 1, set.clone(), to + 1);
-        }
-        for node in self.ends() {
-            res = res.add_end(node + 1);
-        }
-        for (from, set, to) in other.edges() {
-            res = res.add_edge(from + 2 + a_max, set.clone(), to + 2 + a_max);
-        }
-        for node in other.ends() {
-            res = res.add_end(node + 2 + a_max);
-        }
-        res = res
-            .add_edge(0, None, self.start() + 1)
-            .add_edge(0, None, other.start() + 2 + a_max);
-
-        res
-    }
-
-    pub fn star(&self) -> Self {
-        let mut res = self.clone();
-        for end in self.ends() {
-            res = res.add_edge(end, None, self.start());
-        }
-
-        res.add_end(self.start())
-    }
-
-    pub fn concat(&self, other: &Self) -> Self {
-        let a_max = self.nodes().max().unwrap();
+    pub fn union(&self, other: &Self) -> (Self, Vec<(usize, usize)>) {
         let mut res = Self::new(self.start());
+        let mut names = vec![];
+        let offset = self.nodes().max().unwrap_or_default() + 1;
+
         for (from, set, to) in self.edges() {
             res = res.add_edge(from, set.clone(), to);
         }
-        for (from, set, to) in other.edges() {
-            res = res.add_edge(from + 1 + a_max, set.clone(), to + 1 + a_max);
+        for node in self.ends() {
+            res = res.add_end(node);
         }
-        for end in self.ends() {
-            res = res.add_edge(end, None, other.start() + 1 + a_max);
+        for (mut from, set, mut to) in other.edges() {
+            if from == other.start() {
+                names.push((from, self.start()));
+                from = self.start();
+            } else {
+                names.push((from, from + offset));
+                from = from + offset;
+            }
+            if to == other.start() {
+                names.push((to, self.start()));
+                to = self.start();
+            } else {
+                names.push((to, to + offset));
+                to = to + offset;
+            }
+            res = res.add_edge(from, set.clone(), to);
         }
-        for end in other.ends() {
-            res = res.add_end(end + 1 + a_max);
+        for node in other.ends() {
+            if node == other.start() {
+                res = res.add_end(self.start());
+                names.push((node, self.start()));
+            } else {
+                res = res.add_end(node + offset);
+                names.push((node, node + offset));
+            }
         }
 
-        res
+        names.sort_unstable();
+        names.dedup();
+        (res, names)
+    }
+
+    pub fn star(&self) -> (Self, Vec<(usize, usize)>) {
+        let mut res = Self::new(self.start());
+        let mut names = vec![];
+        for (mut from, set, mut to) in self.edges() {
+            if self.is_end_node(from) {
+                names.push((from, self.start()));
+                from = self.start();
+            } else {
+                names.push((from, from));
+            }
+            if self.is_end_node(to) {
+                names.push((to, self.start()));
+                to = self.start();
+            } else {
+                names.push((to, to));
+            }
+
+            res = res.add_edge(from, set.clone(), to);
+        }
+
+        (res.add_end(self.start()), names)
+    }
+
+    pub fn concat(&self, other: &Self) -> (Self, Vec<(usize, usize)>) {
+        let mut res = Self::new(self.start());
+        let mut names = vec![];
+        for (from, set, to) in self.edges() {
+            res = res.add_edge(from, set.clone(), to);
+        }
+        let offset = self.nodes().max().unwrap_or_default() + 1;
+
+        for (from, set, to) in other.edges() {
+            let froms = if from == other.start() {
+                self.ends().collect()
+            } else {
+                vec![from + offset]
+            };
+            let tos = if to == other.start() {
+                self.ends().collect()
+            } else {
+                vec![to + offset]
+            };
+            names.extend(froms.iter().map(|x| (from, *x)));
+            names.extend(tos.iter().map(|x| (to, *x)));
+
+            for from in froms {
+                for to in &tos {
+                    res = res.add_edge(from, set.clone(), *to);
+                }
+            }
+        }
+
+        for end in other.ends() {
+            let ends = if end == other.start() {
+                self.ends().collect()
+            } else {
+                vec![end + offset]
+            };
+            names.extend(ends.iter().map(|x| (end, *x)));
+            for end in ends {
+                res = res.add_end(end)
+            }
+        }
+
+        names.dedup();
+        (res, names)
     }
 
     pub fn complement(&self) -> Self {
@@ -167,13 +181,13 @@ impl SetAutomata {
         res.remove_dead_states()
     }
 
-    pub fn minimize(&self) -> (Self, Vec<(usize, usize)>) {
+    pub fn minimize(&self, end_eq: bool) -> (Self, Vec<(usize, usize)>) {
         assert!(self.is_dfa());
         let s = self.add_dead_state();
         let s = s.remove_unreachable();
         assert!(s.is_dfa());
 
-        let (node_nums, distinguishable) = s.table_filling();
+        let (node_nums, distinguishable) = s.table_filling(end_eq);
         let mut block_num = vec![0; node_nums.len()];
         let mut nodes_per_block = vec![];
         let mut next_block = 1;
@@ -208,15 +222,14 @@ impl SetAutomata {
                 .flat_map(|a| s.edges_from(a))
             {
                 let i = node_nums.binary_search(&to).unwrap();
-                to_block[block_num[i] - 1] =
-                    to_block[block_num[i] - 1].union(item.as_ref().unwrap());
+                to_block[block_num[i] - 1] = to_block[block_num[i] - 1].union(item);
             }
 
             for (j, set) in to_block.into_iter().enumerate() {
                 if set.is_empty() {
                     continue;
                 }
-                res = res.add_edge(i + 1, Some(set), j + 1);
+                res = res.add_edge(i + 1, set, j + 1);
             }
 
             if block.iter().cloned().any(|i| s.is_end_node(node_nums[i])) {
@@ -231,7 +244,7 @@ impl SetAutomata {
         (res, translation)
     }
 
-    fn table_filling(&self) -> (Vec<usize>, Vec<bool>) {
+    fn table_filling(&self, end_eq: bool) -> (Vec<usize>, Vec<bool>) {
         let mut names: Vec<_> = self.nodes().collect();
         names.sort();
         let mut dist = vec![false; names.len() * names.len()];
@@ -239,7 +252,9 @@ impl SetAutomata {
         let mut next = vec![];
         for (i, a) in names.iter().cloned().enumerate() {
             for (j, b) in names.iter().cloned().enumerate().skip(i + 1) {
-                if self.is_end_node(a) != self.is_end_node(b) {
+                if self.is_end_node(a) != self.is_end_node(b)
+                    || (end_eq && self.is_end_node(a) && self.is_end_node(b))
+                {
                     assert!(!dist[i * names.len() + j], "{i}, {j}");
                     dist[i * names.len() + j] = true;
                     dist[j * names.len() + i] = true;
@@ -257,12 +272,7 @@ impl SetAutomata {
                         continue;
                     }
 
-                    if a_item
-                        .as_ref()
-                        .unwrap()
-                        .intersect(b_item.as_ref().unwrap())
-                        .is_empty()
-                    {
+                    if a_item.intersect(b_item).is_empty() {
                         continue;
                     }
                     dist[k * names.len() + l] = true;
@@ -323,17 +333,17 @@ impl SetAutomata {
     pub fn add_dead_state(&self) -> Self {
         let dead = self.nodes().max().unwrap() + 1;
         let mut res = Self::new(self.start());
-        res = res.add_edge(dead, Some(CharSet::full()), dead);
+        res = res.add_edge(dead, CharSet::full(), dead);
 
         for n in self.nodes() {
             let mut out = CharSet::empty();
             for (_, item, to) in self.edges_from(n) {
                 res = res.add_edge(n, item.clone(), to);
-                out = out.union(item.as_ref().unwrap());
+                out = out.union(item);
             }
             let to_dead = out.complement();
             if !to_dead.is_empty() {
-                res = res.add_edge(n, Some(to_dead), dead);
+                res = res.add_edge(n, to_dead, dead);
             }
         }
 
@@ -490,11 +500,7 @@ impl Display for SetAutomata {
         writeln!(f, "digraph {{\nnode [shape=circle];\nQ1 [style=invisible, height=0, width=0, fixedsize=true];")?;
         writeln!(f, "Q1 -> {};", self.start())?;
         for (from, set, to) in self.edges() {
-            if let Some(set) = set {
-                writeln!(f, "{} -> {} [label=\"{}\"];", from, to, set)?;
-            } else {
-                writeln!(f, "{} -> {}; ", from, to)?;
-            }
+            writeln!(f, "{} -> {} [label=\"{}\"];", from, to, set)?;
         }
 
         for n in self.ends() {
@@ -515,7 +521,7 @@ mod tests {
         let mut cur = dfa.start();
         'OUTER: for c in word {
             for (_, set, next) in dfa.edges_from(cur) {
-                if set.as_ref().unwrap().contains(c) {
+                if set.contains(c) {
                     cur = next;
                     continue 'OUTER;
                 }
@@ -525,8 +531,8 @@ mod tests {
         dfa.is_end_node(cur)
     }
 
-    fn one_set(c: char) -> Option<CharSet> {
-        Some(CharSet::range(c, c))
+    fn one_set(c: char) -> CharSet {
+        CharSet::range(c, c)
     }
 
     fn example_dfa() -> SetAutomata {
@@ -554,7 +560,7 @@ mod tests {
     fn table_filling() {
         let dfa = example_dfa();
         assert!(dfa.is_dfa());
-        let (names, distinguishable) = dfa.table_filling();
+        let (names, distinguishable) = dfa.table_filling(false);
         assert!(distinguishable.len() == names.len() * names.len());
         assert!(names == [0, 1, 2, 3, 4, 5, 6, 7], "{:?}", names);
 
@@ -573,7 +579,7 @@ mod tests {
     #[test]
     fn minimize() {
         let dfa = example_dfa();
-        let (mdfa, _names) = dfa.minimize();
+        let (mdfa, _names) = dfa.minimize(false);
         assert_eq!(mdfa.nodes().count(), 6);
     }
 
@@ -583,29 +589,27 @@ mod tests {
         let b = SetAutomata::new(0).add_edge(0, one_set('b'), 1).add_end(1);
 
         let c = SetAutomata::new(0);
-        let c = c.remove_nones().determine().0.minimize().0;
+        let c = c.determine().0.minimize(false).0;
         for (w, res) in [("", false), ("a", false)] {
             assert_eq!(traverse(&c, w.chars()), res, "{w}");
         }
 
         let c = SetAutomata::new(0).add_end(0);
-        let c = c.remove_nones();
         let c = c.determine().0;
-        let c = c.minimize().0;
+        let c = c.minimize(false).0;
         for (w, res) in [("", true), ("a", false)] {
             assert_eq!(traverse(&c, w.chars()), res, "{w}");
         }
 
-        let c = a.union(&b);
-        let c = c.remove_nones().determine().0.minimize().0;
+        let c = a.union(&b.clone().rename(|x| x + 2)).0;
+        let c = c.determine().0.minimize(false).0;
         for (w, res) in [("a", true), ("b", true), ("c", false), ("aa", false)] {
             assert_eq!(traverse(&c, w.chars()), res, "{w}");
         }
 
-        let c = a.concat(&b);
-        let c = c.remove_nones();
+        let c = a.concat(&b).0;
         let c = c.determine().0;
-        let c = c.minimize().0;
+        let c = c.minimize(false).0;
         for (w, res) in [
             ("a", false),
             ("b", false),
@@ -616,10 +620,9 @@ mod tests {
             assert_eq!(traverse(&c, w.chars()), res, "{w}");
         }
 
-        let c = a.star();
-        let c = c.remove_nones();
+        let c = a.star().0;
         let c = c.determine().0;
-        let c = c.minimize().0;
+        let c = c.minimize(false).0;
         for (w, res) in [
             ("", true),
             ("a", true),
@@ -633,10 +636,9 @@ mod tests {
             assert_eq!(traverse(&c, w.chars()), res, "{w}");
         }
 
-        let c = a.star().union(&b.concat(&b).concat(&b)).star();
-        let c = c.remove_nones();
+        let c = a.star().0.union(&b.concat(&b).0.concat(&b).0).0.star().0;
         let c = c.determine().0;
-        let c = c.minimize().0;
+        let c = c.minimize(false).0;
         for (w, res) in [
             ("a", true),
             ("b", false),

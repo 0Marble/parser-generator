@@ -18,7 +18,7 @@ impl Regex {
             Regex::None => SetAutomata::new(0),
             Regex::Empty => SetAutomata::new(0).add_end(0),
             Regex::Base(c) => SetAutomata::new(0)
-                .add_edge(0, Some(CharSet::range(*c, *c)), 1)
+                .add_edge(0, CharSet::range(*c, *c), 1)
                 .add_end(1),
             Regex::Concat(rs) => {
                 let first = if let Some(first) = rs.first() {
@@ -27,8 +27,12 @@ impl Regex {
                     return SetAutomata::new(0).add_end(0);
                 };
                 let mut res = first.to_nfa();
+                let mut offset = res.nodes().max().unwrap_or_default() + 1;
                 for r in &rs[1..] {
-                    res = res.concat(&r.to_nfa());
+                    let r = r.to_nfa();
+                    let t = r.nodes().max().unwrap_or_default() + 1;
+                    res = res.concat(&r.rename(|x| x + offset)).0;
+                    offset += t;
                 }
                 res
             }
@@ -39,14 +43,18 @@ impl Regex {
                     return SetAutomata::new(0).add_end(0);
                 };
                 let mut res = first.to_nfa();
+                let mut offset = res.nodes().max().unwrap_or_default() + 1;
                 for r in &rs[1..] {
-                    res = res.union(&r.to_nfa());
+                    let r = r.to_nfa();
+                    let t = r.nodes().max().unwrap_or_default() + 1;
+                    res = res.union(&r.rename(|x| x + offset)).0;
+                    offset += t;
                 }
                 res
             }
-            Regex::Star(r) => r.to_nfa().star(),
+            Regex::Star(r) => r.to_nfa().star().0,
             Regex::Range(min, max) => SetAutomata::new(0)
-                .add_edge(0, Some(CharSet::range(*min, *max)), 1)
+                .add_edge(0, CharSet::range(*min, *max), 1)
                 .add_end(1),
             Regex::Not(r) => r.to_nfa().complement(),
             Regex::Option(r) => {

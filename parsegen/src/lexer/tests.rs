@@ -1,5 +1,3 @@
-use std::fmt::Display;
-
 use crate::Token;
 
 use super::{regex::Regex, Lexer};
@@ -47,25 +45,27 @@ impl LexerRunner for RuntimeLexer {
         let mut tok_start = 0;
         let mut len = 0;
         for (i, c) in s.char_indices() {
+            print!("->{cur}-{c}");
             len = i + 1;
 
             let next = l.step(cur, c);
             if l.is_dead_state(next) {
                 let restart = l.step(l.start(), c);
-                if !l.is_dead_state(restart) {
-                    cur = restart;
-                    if let Some(tok) = l.accept_token(cur) {
-                        res.push(TokenOrGarbage::Token(tok, tok_start, i - tok_start));
-                    } else {
-                        res.push(TokenOrGarbage::Garbage(tok_start, i - tok_start));
-                    }
+                if let Some(tok) = l.accept_token(cur) {
+                    res.push(TokenOrGarbage::Token(tok, tok_start, i - tok_start));
                     tok_start = i;
+                } else if !l.is_dead_state(restart) {
+                    res.push(TokenOrGarbage::Garbage(tok_start, i - tok_start));
+                    tok_start = i;
+                } else {
                 }
+                cur = restart;
             } else {
                 cur = next;
             }
         }
 
+        println!("->{cur}->");
         if let Some(tok) = l.accept_token(cur) {
             res.push(TokenOrGarbage::Token(tok, tok_start, len - tok_start));
         } else {
@@ -81,16 +81,16 @@ fn empty_string() -> (Lexer, Vec<(String, Vec<String>)>) {
         Lexer::new([(Regex::Empty, Token::new("Empty").unwrap())]),
         vec![
             ("".to_string(), vec!["Empty()".to_string()]),
-            ("hello world".to_string(), vec!["Garbage(hello world)".to_string()]),
-            ("Lorem ipsum dolor sit amet, officia excepteur ex fugiat reprehenderit enim labore culpa sint ad nisi Lorem pariatur mollit ex esse exercitation amet. Nisi anim cupidatat excepteur officia. Reprehenderit nostrud nostrud ipsum Lorem est aliquip amet voluptate voluptate dolor minim nulla est proident. Nostrud officia pariatur ut officia. Sit irure elit esse ea nulla sunt ex occaecat reprehenderit commodo officia dolor Lorem duis laboris cupidatat officia voluptate. Culpa proident adipisicing id nulla nisi laboris ex in Lorem sunt duis officia eiusmod. Aliqua reprehenderit commodo ex non excepteur duis sunt velit enim. Voluptate laboris sint cupidatat ullamco ut ea consectetur et est culpa et culpa duis.".to_string(), vec!["Garbage(Lorem ipsum dolor sit amet, officia excepteur ex fugiat reprehenderit enim labore culpa sint ad nisi Lorem pariatur mollit ex esse exercitation amet. Nisi anim cupidatat excepteur officia. Reprehenderit nostrud nostrud ipsum Lorem est aliquip amet voluptate voluptate dolor minim nulla est proident. Nostrud officia pariatur ut officia. Sit irure elit esse ea nulla sunt ex occaecat reprehenderit commodo officia dolor Lorem duis laboris cupidatat officia voluptate. Culpa proident adipisicing id nulla nisi laboris ex in Lorem sunt duis officia eiusmod. Aliqua reprehenderit commodo ex non excepteur duis sunt velit enim. Voluptate laboris sint cupidatat ullamco ut ea consectetur et est culpa et culpa duis.)".to_string()]),
+            ("hello world".to_string(), vec!["Empty()".to_string(), "Garbage(hello world)".to_string()]),
+            ("Lorem ipsum dolor sit amet, officia excepteur ex fugiat reprehenderit enim labore culpa sint ad nisi Lorem pariatur mollit ex esse exercitation amet. Nisi anim cupidatat excepteur officia. Reprehenderit nostrud nostrud ipsum Lorem est aliquip amet voluptate voluptate dolor minim nulla est proident. Nostrud officia pariatur ut officia. Sit irure elit esse ea nulla sunt ex occaecat reprehenderit commodo officia dolor Lorem duis laboris cupidatat officia voluptate. Culpa proident adipisicing id nulla nisi laboris ex in Lorem sunt duis officia eiusmod. Aliqua reprehenderit commodo ex non excepteur duis sunt velit enim. Voluptate laboris sint cupidatat ullamco ut ea consectetur et est culpa et culpa duis.".to_string(), vec!["Empty()".to_string(),"Garbage(Lorem ipsum dolor sit amet, officia excepteur ex fugiat reprehenderit enim labore culpa sint ad nisi Lorem pariatur mollit ex esse exercitation amet. Nisi anim cupidatat excepteur officia. Reprehenderit nostrud nostrud ipsum Lorem est aliquip amet voluptate voluptate dolor minim nulla est proident. Nostrud officia pariatur ut officia. Sit irure elit esse ea nulla sunt ex occaecat reprehenderit commodo officia dolor Lorem duis laboris cupidatat officia voluptate. Culpa proident adipisicing id nulla nisi laboris ex in Lorem sunt duis officia eiusmod. Aliqua reprehenderit commodo ex non excepteur duis sunt velit enim. Voluptate laboris sint cupidatat ullamco ut ea consectetur et est culpa et culpa duis.)".to_string()]),
         ],
     )
 }
 
 fn ident_or_keyword() -> (Lexer, Vec<(String, Vec<String>)>) {
     let l = Lexer::new([
-        (Regex::ident(), Token::new("Ident").unwrap()),
         (Regex::keyword("if"), Token::new("If").unwrap()),
+        (Regex::ident(), Token::new("Ident").unwrap()),
         (Regex::ascii_whitespace(), Token::new("Ws").unwrap()),
     ]);
 
@@ -109,11 +109,11 @@ fn ident_or_keyword() -> (Lexer, Vec<(String, Vec<String>)>) {
                 ],
             ),
             (
-                "1if2iffy 3".to_string(),
+                "1if!iffy 3".to_string(),
                 vec![
                     "Garbage(1)".to_string(),
                     "If(if)".to_string(),
-                    "Garbage(2)".to_string(),
+                    "Garbage(!)".to_string(),
                     "Ident(iffy)".to_string(),
                     "Ws( )".to_string(),
                     "Garbage(3)".to_string(),
@@ -126,7 +126,6 @@ fn ident_or_keyword() -> (Lexer, Vec<(String, Vec<String>)>) {
 fn math_expr() -> (Lexer, Vec<(String, Vec<String>)>) {
     (
         Lexer::new([
-            (Regex::ident(), Token::new("Ident").unwrap()),
             (Regex::int(), Token::new("Num").unwrap()),
             (Regex::Base('+'), Token::new("Add").unwrap()),
             (Regex::Base('-'), Token::new("Sub").unwrap()),
@@ -135,6 +134,7 @@ fn math_expr() -> (Lexer, Vec<(String, Vec<String>)>) {
             (Regex::Base('('), Token::new("Lp").unwrap()),
             (Regex::Base(')'), Token::new("Rp").unwrap()),
             (Regex::Base(','), Token::new("Coma").unwrap()),
+            (Regex::ident(), Token::new("Ident").unwrap()),
             (Regex::ascii_whitespace(), Token::new("Ws").unwrap()),
         ]),
         vec![
@@ -208,12 +208,15 @@ pub fn lexer_gauntlet(lr: &mut dyn LexerRunner) {
         ("ident_ok_keyword", ident_or_keyword()),
         ("math_exprt", math_expr()),
     ] {
-        lr.set_lexer(l);
         println!("{name}");
+        std::fs::write(format!("tests/lexer_{name}.dot"), l.to_string()).unwrap();
+        lr.set_lexer(l);
         for (input, out) in tests {
             let toks = lr.traverse(&input);
-            println!("{:?}", toks);
-            assert_eq!(rebuild(&toks, &input), input, "failed on \"{input}\"");
+            let s = rebuild(&toks, &input);
+            println!("{s}");
+            println!("{:?}\n{:?}\n", toks, out);
+            assert_eq!(s, input, "failed on \"{input}\"");
             assert_eq!(toks.len(), out.len(), "failed on \"{input}\"");
 
             for (tok, expect) in toks.into_iter().zip(out.into_iter()) {
