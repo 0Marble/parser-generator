@@ -2,6 +2,7 @@ use std::{
     char,
     collections::{HashMap, HashSet},
     io::Write,
+    process::Command,
 };
 
 use crate::{
@@ -57,7 +58,7 @@ impl RustCodegen {
             w,
             "#[derive(Debug, Clone, PartialEq, Eq, Hash)]\npub enum Token {{\n  Token(TokenType, String),\n  Garbage(String)\n}}\n"
         )?;
-        writeln!(w, "impl Token {{ pub fn get_type(&self) -> Option<TokenType> {{ match self {{ Self::Token(t, _) => Some(t.clone()), _ => None }} }} }}")?;
+        writeln!(w, "impl Token {{ pub fn get_type(&self) -> Option<TokenType> {{ match self {{ Self::Token(t, _) => Some(t.clone()), _ => None }} }} pub fn get_text(&self) -> &str {{ match self {{ Self::Token(_, s) => s, Self::Garbage(s) => s }} }} }}")?;
 
         writeln!(
             w,
@@ -115,9 +116,9 @@ pub fn eat_char(&mut self, c: char) -> Option<Token> {{
   if self.is_dead_state(next) {{
     let restart = self.step(self.start, c);
     if let Some(tok) = self.is_end(self.cur) {{
-      res = Some(Token::Token(tok, std::mem::take(self.cur_word)));
+      res = Some(Token::Token(tok, std::mem::take(&mut self.cur_word)));
     }} else if !self.is_dead_state(restart) {{
-      res = Some(Token::Garbage(std::mem::take(self.cur_word)));
+      res = Some(Token::Garbage(std::mem::take(&mut self.cur_word)));
     }}
     self.cur = restart;
   }} else {{
@@ -133,10 +134,10 @@ pub fn eat_char(&mut self, c: char) -> Option<Token> {{
             w,
             "// When the text ends, returns the last token
 pub fn finalize(&mut self) -> Token {{
-  if let Some(tok) = l.accept_token(cur) {{
-    return Token::Token(tok, std::mem::take(self.cur_word));
+  if let Some(tok) = self.is_end(self.cur) {{
+    return Token::Token(tok, std::mem::take(&mut self.cur_word));
   }} else {{
-    return Token::Garbage(std::mem::take(self.cur_word));
+    return Token::Garbage(std::mem::take(&mut self.cur_word));
   }}
 }}"
         )?;
@@ -241,7 +242,7 @@ pub fn new() -> Self {{
             }
         }
 
-        writeln!(w, "x => panic!(\"Could not continue from node {{x}}, stack {{:?}}, buf {{:?}}\", self.stack, self.buf),}}\nif had_pref {{ break; }} else {{ panic!(\"Could not continue from node {{x}}, stack {{:?}}, buf {{:?}}\", self.stack, self.buf)}} }}\nreturn res;\n}}\n")?;
+        writeln!(w, "x => panic!(\"Could not continue from node {{x}}, stack {{:?}}, buf {{:?}}\", self.stack, self.buf),}}\nif had_pref {{ break; }} else {{ panic!(\"Could not continue from node {{}}, stack {{:?}}, buf {{:?}}\", self.cur, self.stack, self.buf)}} }}\nreturn res;\n}}\n")?;
 
         writeln!(
             w,
@@ -275,8 +276,8 @@ pub fn ear_tok(&mut self, tok: Token) -> Vec<Symbol> {{
         write!(w, "{{\nlet tok_lk = [")?;
         for t in item.tok_lk() {
             match t {
-                TokenOrEnd::Token(t) => write!(w, "{t}, ")?,
-                TokenOrEnd::End => write!(w, "_End, ")?,
+                TokenOrEnd::Token(t) => write!(w, "TokenType::{t}, ")?,
+                TokenOrEnd::End => write!(w, "TokenType::_End, ")?,
             }
         }
         writeln!(w, "];")?;
@@ -284,7 +285,7 @@ pub fn ear_tok(&mut self, tok: Token) -> Vec<Symbol> {{
             w,
             "let r = self.check_buf(&tok_lk);
 if r == 1 {{ had_pref = true; }}
-else if r == 1 {{"
+else if r == 0 {{"
         )?;
         match item.bracket() {
             Some(Bracket::Open(x)) => writeln!(w, "self.stack.push({x});")?,
@@ -309,38 +310,160 @@ else if r == 1 {{"
 }
 
 impl Codegen for RustCodegen {
-    fn gen_code(&self, lexer: &Lexer, parser: &Lgraph, grammar: &Grammar, path: &str) {
-        let mut lexer_file = std::fs::File::create(format!("{path}/lexer.rs")).unwrap();
+    fn gen_code(&self, lexer: &Lexer, parser: &Lgraph, grammar: &Grammar, path: &str, name: &str) {
+        std::fs::create_dir_all(format!("{path}/{name}/src")).unwrap();
+
+        std::fs::write(
+            format!("{path}/{name}/Cargo.toml"),
+            format!(
+                r#"[package]
+name = "{name}"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]"#
+            ),
+        )
+        .unwrap();
+
+        std::fs::write(
+            format!("{path}/{name}/src/lib.rs"),
+            "pub mod lexer; pub mod parser;",
+        )
+        .unwrap();
+
+        let mut lexer_file = std::fs::File::create(format!("{path}/{name}/src/lexer.rs")).unwrap();
         self.write_lexer(&mut lexer_file, lexer).unwrap();
 
-        let mut parser_file = std::fs::File::create(format!("{path}/parser.rs")).unwrap();
+        let mut parser_file =
+            std::fs::File::create(format!("{path}/{name}/src/parser.rs")).unwrap();
         self.write_parser(&mut parser_file, parser, grammar)
+            .unwrap();
+
+        Command::new("cargo")
+            .current_dir(format!("{path}/{name}"))
+            .args(["clippy", "--fix", "--allow-no-vcs"])
+            .output()
+            .unwrap();
+        Command::new("rustfmt")
+            .args([format!("{path}/{name}/src/*")])
+            .output()
             .unwrap();
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use std::str::FromStr;
+    use std::{process::Stdio, str::FromStr};
 
-    use crate::{lexer::regex::Regex, Token};
+    use crate::{
+        lexer::tests::{lexer_gauntlet, LexerRunner, TokenOrGarbage},
+        Token,
+    };
 
     use super::*;
 
-    #[test]
-    fn hello() {
-        let lex = Lexer::new([
-            (Regex::Base('+'), Token::new("Add").unwrap()),
-            (Regex::Base('*'), Token::new("Mul").unwrap()),
-            (Regex::Base('('), Token::new("Lp").unwrap()),
-            (Regex::Base(')'), Token::new("Rp").unwrap()),
-            (Regex::int(), Token::new("Num").unwrap()),
-            (Regex::ascii_whitespace(), Token::new("Ws").unwrap()),
-        ]);
-        let grammar =
-            Grammar::from_str("E -> T Add E | T; T -> F Mul T | F; F -> Num | Lp E Rp;").unwrap();
-        let lg = Lgraph::slr(&grammar);
+    struct RustLexerRunner(String);
 
-        RustCodegen.gen_code(&lex, &lg, &grammar, "tests/hello_parser");
+    impl LexerRunner for RustLexerRunner {
+        fn set_lexer(&mut self, lexer: Lexer) {
+            let grammar = Grammar::from_str("E -> ;").unwrap();
+            RustCodegen.gen_code(
+                &lexer,
+                &Lgraph::ll1(&grammar),
+                &grammar,
+                "tests",
+                &format!("{}_lexer_crate", self.0),
+            );
+            let src = format!(
+                r#"
+            use {}_lexer_crate::lexer::*;
+            use std::io::Read;
+
+            fn print_tok(tok: Token, i: &mut usize) {{
+                    match &tok {{
+                        Token::Token(t, s) => println!("{{t:?}}({{i}}, {{}})", s.len()),
+                        Token::Garbage(s) => println!("Garbage({{i}}, {{}})", s.len()),
+                    }}
+                    *i += tok.get_text().len();
+            }}
+
+            fn main() {{
+                let mut lex = Lexer::new();
+                let mut i = 0;
+                let mut src = String::new();
+                std::io::stdin().read_to_string(&mut src).unwrap();
+                for c in src.chars() {{
+                    if let Some(tok) = lex.eat_char(c) {{
+                        print_tok(tok, &mut i);
+                    }}
+                }}
+
+                print_tok(lex.finalize(), &mut i);
+            }}"#,
+                self.0
+            );
+
+            let conf = format!(
+                r#"[package]
+name = "{}_lexer_prog"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+{}_lexer_crate = {{ path = "../{}_lexer_crate" }}
+"#,
+                self.0, self.0, self.0
+            );
+
+            std::fs::create_dir_all(format!("tests/{}_lexer_prog/src", self.0)).unwrap();
+            std::fs::write(format!("tests/{}_lexer_prog/src/main.rs", self.0), src).unwrap();
+            std::fs::write(format!("tests/{}_lexer_prog/Cargo.toml", self.0), conf).unwrap();
+        }
+
+        fn traverse(&self, s: &str) -> Vec<TokenOrGarbage> {
+            let mut proc = Command::new("cargo")
+                .current_dir(format!("tests/{}_lexer_prog", self.0))
+                .args(["run"])
+                .stdin(Stdio::piped())
+                .stderr(Stdio::piped())
+                .stdout(Stdio::piped())
+                .spawn()
+                .unwrap();
+            let mut input = proc.stdin.take().unwrap();
+            write!(input, "{}", s).unwrap();
+            drop(input);
+
+            let output = proc.wait_with_output().unwrap();
+            assert!(
+                output.status.success(),
+                "stderr: {}",
+                String::from_utf8(output.stderr).unwrap()
+            );
+
+            let output = String::from_utf8(output.stdout).unwrap();
+            let mut res = vec![];
+
+            for tok in output.lines() {
+                println!("{tok}");
+                let (tok_type, after_type) = tok.split_once('(').unwrap();
+                let (start, len) = after_type.split_once(',').unwrap();
+                let len = len.trim().strip_suffix(')').unwrap();
+                let start = start.parse().unwrap();
+                let len = len.parse().unwrap();
+
+                match tok_type {
+                    "Garbage" => res.push(TokenOrGarbage::Garbage(start, len)),
+                    tok => res.push(TokenOrGarbage::Token(Token::new(tok).unwrap(), start, len)),
+                }
+            }
+
+            res
+        }
+    }
+
+    #[test]
+    fn lexer() {
+        lexer_gauntlet(&mut RustLexerRunner("rust_lexer".to_string()));
     }
 }

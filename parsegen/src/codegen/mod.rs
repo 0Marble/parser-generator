@@ -4,7 +4,7 @@ use crate::{
 };
 
 pub trait Codegen {
-    fn gen_code(&self, lexer: &Lexer, parser: &Lgraph, grammar: &Grammar, path: &str);
+    fn gen_code(&self, lexer: &Lexer, parser: &Lgraph, grammar: &Grammar, path: &str, name: &str);
 }
 
 pub mod rs;
