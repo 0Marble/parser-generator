@@ -49,10 +49,19 @@ impl RustCodegen {
             "#[derive(Debug, Clone, PartialEq, Eq, Hash)]\npub enum TokenType {{\n_End,\n"
         )?;
         let toks: HashSet<_> = lexer.tokens().map(|(_, t)| t).collect();
-        for t in toks {
+        for t in &toks {
             writeln!(w, "  {t},")?;
         }
         writeln!(w, "}}\n")?;
+
+        writeln!(
+            w,
+            "impl TokenType {{\npub fn from_str(s: &str) -> Self {{\nmatch s {{"
+        )?;
+        for t in &toks {
+            writeln!(w, "\"{t}\" => Self::{t},")?;
+        }
+        writeln!(w, "x => panic!(\"Not a token: {{x}}\"),}}\n}}\n}}")?;
 
         writeln!(
             w,
@@ -188,7 +197,7 @@ pub fn new() -> Self {{
             "pub struct Parser {{
   cur: usize,
   stack: Vec<usize>,
-  buf: VecDeque<Token>,
+  buf: VecDeque<TokenType>,
 }}"
         )?;
 
@@ -201,13 +210,19 @@ pub fn new() -> Self {{
       if self.buf.len() <= i {{
         return 1;
       }}
-      if self.buf[i].get_type() != Some(tok) {{
+      if self.buf[i] != tok {{
         return 2;
       }}
     }}
     return 0;
   }}"
         )?;
+
+        writeln!(w, "// Checks if the parser has reached a valid end state\npub fn is_end(&self) -> bool {{ if !self.stack.is_empty() || !self.buf.is_empty() {{ return false; }}\nmatch self.cur {{")?;
+        for end in parser.end_nodes() {
+            writeln!(w, "{end} => true,")?;
+        }
+        writeln!(w, "_ => false,\n}}\n}}\n")?;
 
         writeln!(
             w,
@@ -242,18 +257,41 @@ pub fn new() -> Self {{
             }
         }
 
-        writeln!(w, "x => panic!(\"Could not continue from node {{x}}, stack {{:?}}, buf {{:?}}\", self.stack, self.buf),}}\nif had_pref {{ break; }} else {{ panic!(\"Could not continue from node {{}}, stack {{:?}}, buf {{:?}}\", self.cur, self.stack, self.buf)}} }}\nreturn res;\n}}\n")?;
+        writeln!(w, "_ => {{  }}")?;
+
+        writeln!(
+            w,
+            "
+        }}
+        if had_pref || self.is_end() {{ 
+            return res;
+        }} else {{
+            panic!(\"Could not continue from node {{}}, stack {{:?}}, buf {{:?}}\", self.cur, self.stack, self.buf);
+        }}
+    }}
+}}"
+        )?;
 
         writeln!(
             w,
             "// Eats a token, produces a vector of corresponding symbols
-pub fn ear_tok(&mut self, tok: Token) -> Vec<Symbol> {{
+pub fn eat_tok(&mut self, tok: TokenType) -> Vec<Symbol> {{
   let mut res = self.traverse();
   self.buf.push_back(tok);
   res.append(&mut self.traverse());
   return res;
 }}
-"
+
+// Create a new Parser
+pub fn new() -> Self {{
+    Self {{
+        cur: {},
+        stack: vec![],
+        buf: VecDeque::new(),
+    }}
+}}
+",
+            parser.start(),
         )?;
 
         writeln!(w, "}} // impl Parser")?;
@@ -267,23 +305,30 @@ pub fn ear_tok(&mut self, tok: Token) -> Vec<Symbol> {{
         item: &Item,
         to: usize,
     ) -> std::io::Result<()> {
+        let mut buf = vec![];
+        write!(&mut buf, "[")?;
+        for t in item.tok_lk() {
+            match t {
+                TokenOrEnd::Token(t) => write!(&mut buf, "TokenType::{t}, ")?,
+                TokenOrEnd::End => write!(&mut buf, "TokenType::_End, ")?,
+            }
+        }
+        write!(&mut buf, "]")?;
+        let lookahead = String::from_utf8(buf).unwrap();
+
         match item.bracket() {
-            Some(Bracket::Closed(x)) => write!(w, "Some({x}) => ")?,
-            Some(Bracket::Wildcard) => write!(w, "Some(_) => ")?,
+            Some(Bracket::Closed(x)) => {
+                write!(w, "Some({x}) if self.check_buf(&{lookahead}) != 2 => {{")?
+            }
+            Some(Bracket::Wildcard) => {
+                write!(w, "Some(_)  if self.check_buf(&{lookahead}) != 2 => {{")?
+            }
             _ => (),
         }
 
-        write!(w, "{{\nlet tok_lk = [")?;
-        for t in item.tok_lk() {
-            match t {
-                TokenOrEnd::Token(t) => write!(w, "TokenType::{t}, ")?,
-                TokenOrEnd::End => write!(w, "TokenType::_End, ")?,
-            }
-        }
-        writeln!(w, "];")?;
         writeln!(
             w,
-            "let r = self.check_buf(&tok_lk);
+            "let r = self.check_buf(&{lookahead});
 if r == 1 {{ had_pref = true; }}
 else if r == 0 {{"
         )?;
@@ -303,7 +348,12 @@ else if r == 0 {{"
             None => (),
         }
 
-        writeln!(w, "self.cur = {to};\ncontinue;\n}}\n}}")?;
+        writeln!(w, "self.cur = {to};\ncontinue;\n}}")?;
+        match item.bracket() {
+            Some(Bracket::Closed(_)) => writeln!(w, "}}")?,
+            Some(Bracket::Wildcard) => writeln!(w, "}}")?,
+            _ => (),
+        }
 
         Ok(())
     }
@@ -357,7 +407,14 @@ mod tests {
     use std::{process::Stdio, str::FromStr};
 
     use crate::{
-        lexer::tests::{lexer_gauntlet, LexerRunner, TokenOrGarbage},
+        lexer::{
+            regex::Regex,
+            tests::{lexer_gauntlet, LexerRunner, TokenOrGarbage},
+        },
+        parser::{
+            grammar::ParseTree,
+            tests::{ll1_gauntlet, slr_gauntlet, TestParser, TraverseError},
+        },
         Token,
     };
 
@@ -462,8 +519,142 @@ edition = "2021"
         }
     }
 
+    struct RustParserRunner(String, Option<Grammar>);
+
+    impl TestParser for RustParserRunner {
+        fn init(&mut self, g: Lgraph, grammar: Grammar) {
+            let lex = Lexer::new(grammar.terminals().map(|t| (Regex::Empty, t)));
+
+            RustCodegen.gen_code(
+                &lex,
+                &g,
+                &grammar,
+                "tests",
+                &format!("{}_parser_crate", self.0),
+            );
+            self.1 = Some(grammar);
+
+            let src = format!(
+                r#"
+            use {}_parser_crate::{{lexer::*, parser::*}};
+            use std::io::Read;
+
+            fn main() {{
+                let mut parser = Parser::new();
+                let mut src = String::new();
+                std::io::stdin().read_to_string(&mut src).unwrap();
+
+                let mut res = vec![];
+                for line in src.lines() {{
+                    let tt = TokenType::from_str(line);
+                    res.append(&mut parser.eat_tok(tt));
+                }}
+                res.append(&mut parser.eat_tok(TokenType::_End));
+                assert!(parser.is_end());
+
+                for sym in res {{
+                    println!("{{sym:?}}");
+                }}
+            }}
+            "#,
+                self.0
+            );
+            let conf = format!(
+                r#"[package]
+name = "{}_parser_prog"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+{}_parser_crate = {{ path = "../{}_parser_crate" }}
+"#,
+                self.0, self.0, self.0
+            );
+
+            std::fs::create_dir_all(format!("tests/{}_parser_prog/src", self.0)).unwrap();
+            std::fs::write(format!("tests/{}_parser_prog/src/main.rs", self.0), src).unwrap();
+            std::fs::write(format!("tests/{}_parser_prog/Cargo.toml", self.0), conf).unwrap();
+        }
+
+        fn parse(&self, toks: &[Token]) -> Result<ParseTree, TraverseError> {
+            let mut proc = Command::new("cargo")
+                .current_dir(format!("tests/{}_parser_prog", self.0))
+                .args(["run"])
+                .stdin(Stdio::piped())
+                .stderr(Stdio::piped())
+                .stdout(Stdio::piped())
+                .spawn()
+                .unwrap();
+            let mut input = proc.stdin.take().unwrap();
+            for t in toks {
+                writeln!(input, "{t}").unwrap();
+            }
+            drop(input);
+
+            let output = proc.wait_with_output().unwrap();
+            assert!(
+                output.status.success(),
+                "stderr: {}",
+                String::from_utf8(output.stderr).unwrap()
+            );
+
+            let output = String::from_utf8(output.stdout).unwrap();
+
+            let mut stack = vec![];
+            for line in output.lines() {
+                println!("{line}");
+                let n = if let Some(t) = line.strip_suffix(')') {
+                    let (rule, num) = t.split_once('(').unwrap();
+                    let num = num.parse().unwrap();
+
+                    if let Some(rule) = rule.strip_suffix("End") {
+                        Node::RuleEnd(num, Token::new(rule).unwrap())
+                    } else if let Some(rule) = rule.strip_suffix("Start") {
+                        Node::RuleStart(num, Token::new(rule).unwrap())
+                    } else {
+                        panic!("Invalid symbol");
+                    }
+                } else {
+                    Node::Leaf(Token::new(line).unwrap())
+                };
+
+                match n {
+                    Node::Leaf(t) => stack.push(ParseTree::new(t)),
+                    Node::RuleEnd(prod_idx, _) => {
+                        let prod = self
+                            .1
+                            .as_ref()
+                            .unwrap()
+                            .productions()
+                            .nth(prod_idx)
+                            .unwrap();
+                        let mut parent = ParseTree::new(prod.lhs());
+                        parent.replace_with_production(0, prod, prod_idx);
+
+                        let body = stack.split_off(stack.len() - prod.rhs().len());
+                        assert_eq!(body.len(), prod.rhs().len());
+                        for (i, child) in body.into_iter().enumerate().rev() {
+                            parent.replace_with_subtree(i + 1, child);
+                        }
+                        stack.push(parent);
+                    }
+                    _ => (),
+                }
+            }
+
+            Ok(stack.pop().unwrap())
+        }
+    }
+
     #[test]
     fn lexer() {
         lexer_gauntlet(&mut RustLexerRunner("rust_lexer".to_string()));
+    }
+
+    #[test]
+    fn parser() {
+        let mut runner = RustParserRunner("rust_parser".to_string(), None);
+        ll1_gauntlet(&mut runner);
+        slr_gauntlet(&mut runner);
     }
 }
