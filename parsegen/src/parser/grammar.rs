@@ -166,8 +166,6 @@ impl Grammar {
                 }
             }
         }
-        terminals.sort();
-        terminals.dedup();
 
         let res = Self {
             start: start.clone(),
@@ -202,7 +200,6 @@ impl Grammar {
     }
     pub fn non_terminals(&self) -> impl Iterator<Item = Token> + '_ {
         let mut lhs: Vec<_> = self.productions().map(|p| p.lhs()).collect();
-        lhs.sort();
         lhs.dedup();
         lhs.into_iter()
     }
