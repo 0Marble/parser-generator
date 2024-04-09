@@ -1,4 +1,8 @@
-use crate::Token;
+use std::collections::HashSet;
+
+use rand::thread_rng;
+
+use crate::{fuzzing::Rng, Token};
 
 use super::{regex::Regex, Lexer};
 
@@ -45,7 +49,6 @@ impl LexerRunner for RuntimeLexer {
         let mut tok_start = 0;
         let mut len = 0;
         for (i, c) in s.char_indices() {
-            print!("->{cur}-{c}");
             len = i + 1;
 
             let next = l.step(cur, c);
@@ -65,7 +68,6 @@ impl LexerRunner for RuntimeLexer {
             }
         }
 
-        println!("->{cur}->");
         if let Some(tok) = l.accept_token(cur) {
             res.push(TokenOrGarbage::Token(tok, tok_start, len - tok_start));
         } else {
@@ -76,26 +78,13 @@ impl LexerRunner for RuntimeLexer {
     }
 }
 
-fn empty_string() -> (Lexer, Vec<(String, Vec<String>)>) {
+fn ident_or_keyword() -> (Vec<(Regex, Token)>, Vec<(String, Vec<String>)>) {
     (
-        Lexer::new([(Regex::Empty, Token::new("Empty").unwrap())]),
         vec![
-            ("".to_string(), vec!["Empty()".to_string()]),
-            ("hello world".to_string(), vec!["Empty()".to_string(), "Garbage(hello world)".to_string()]),
-            ("Lorem ipsum dolor sit amet, officia excepteur ex fugiat reprehenderit enim labore culpa sint ad nisi Lorem pariatur mollit ex esse exercitation amet. Nisi anim cupidatat excepteur officia. Reprehenderit nostrud nostrud ipsum Lorem est aliquip amet voluptate voluptate dolor minim nulla est proident. Nostrud officia pariatur ut officia. Sit irure elit esse ea nulla sunt ex occaecat reprehenderit commodo officia dolor Lorem duis laboris cupidatat officia voluptate. Culpa proident adipisicing id nulla nisi laboris ex in Lorem sunt duis officia eiusmod. Aliqua reprehenderit commodo ex non excepteur duis sunt velit enim. Voluptate laboris sint cupidatat ullamco ut ea consectetur et est culpa et culpa duis.".to_string(), vec!["Empty()".to_string(),"Garbage(Lorem ipsum dolor sit amet, officia excepteur ex fugiat reprehenderit enim labore culpa sint ad nisi Lorem pariatur mollit ex esse exercitation amet. Nisi anim cupidatat excepteur officia. Reprehenderit nostrud nostrud ipsum Lorem est aliquip amet voluptate voluptate dolor minim nulla est proident. Nostrud officia pariatur ut officia. Sit irure elit esse ea nulla sunt ex occaecat reprehenderit commodo officia dolor Lorem duis laboris cupidatat officia voluptate. Culpa proident adipisicing id nulla nisi laboris ex in Lorem sunt duis officia eiusmod. Aliqua reprehenderit commodo ex non excepteur duis sunt velit enim. Voluptate laboris sint cupidatat ullamco ut ea consectetur et est culpa et culpa duis.)".to_string()]),
+            (Regex::keyword("if"), Token::new("If").unwrap()),
+            (Regex::ident(), Token::new("Ident").unwrap()),
+            (Regex::ascii_whitespace(), Token::new("Ws").unwrap()),
         ],
-    )
-}
-
-fn ident_or_keyword() -> (Lexer, Vec<(String, Vec<String>)>) {
-    let l = Lexer::new([
-        (Regex::keyword("if"), Token::new("If").unwrap()),
-        (Regex::ident(), Token::new("Ident").unwrap()),
-        (Regex::ascii_whitespace(), Token::new("Ws").unwrap()),
-    ]);
-
-    (
-        l,
         vec![
             ("if".to_string(), vec!["If(if)".to_string()]),
             ("iffy".to_string(), vec!["Ident(iffy)".to_string()]),
@@ -123,9 +112,9 @@ fn ident_or_keyword() -> (Lexer, Vec<(String, Vec<String>)>) {
     )
 }
 
-fn math_expr() -> (Lexer, Vec<(String, Vec<String>)>) {
+fn math_expr() -> (Vec<(Regex, Token)>, Vec<(String, Vec<String>)>) {
     (
-        Lexer::new([
+        vec![
             (Regex::int(), Token::new("Num").unwrap()),
             (Regex::Base('+'), Token::new("Add").unwrap()),
             (Regex::Base('-'), Token::new("Sub").unwrap()),
@@ -136,7 +125,7 @@ fn math_expr() -> (Lexer, Vec<(String, Vec<String>)>) {
             (Regex::Base(','), Token::new("Coma").unwrap()),
             (Regex::ident(), Token::new("Ident").unwrap()),
             (Regex::ascii_whitespace(), Token::new("Ws").unwrap()),
-        ]),
+        ],
         vec![
             ("x".to_string(), vec!["Ident(x)".to_string()]),
             (
@@ -203,27 +192,81 @@ fn rebuild(toks: &[TokenOrGarbage], src: &str) -> String {
 }
 
 pub fn lexer_gauntlet(lr: &mut dyn LexerRunner) {
-    for (name, (l, tests)) in [
-        ("empty_string", empty_string()),
+    let mut rng = thread_rng();
+    assert!(Regex::ident().naive_match("ifd"));
+
+    for (name, (regs, tests)) in [
         ("ident_ok_keyword", ident_or_keyword()),
         ("math_exprt", math_expr()),
     ] {
+        let l = Lexer::new(regs.clone());
         println!("{name}");
         std::fs::write(format!("tests/lexer_{name}.dot"), l.to_string()).unwrap();
         lr.set_lexer(l);
-        for (input, out) in tests {
+
+        for (input, expected_toks) in tests
+            .into_iter()
+            .chain((0..100).map(|_| fuzz_test(&regs, &mut rng, 10)))
+        {
             let toks = lr.traverse(&input);
             let s = rebuild(&toks, &input);
             println!("{s}");
-            println!("{:?}\n{:?}\n", toks, out);
+            println!(
+                "{:?}\n{:?}\n",
+                toks.iter().map(|x| x.print(&input)).collect::<Vec<_>>(),
+                expected_toks
+            );
             assert_eq!(s, input, "failed on \"{input}\"");
-            assert_eq!(toks.len(), out.len(), "failed on \"{input}\"");
+            assert_eq!(toks.len(), expected_toks.len(), "failed on \"{input}\"");
 
-            for (tok, expect) in toks.into_iter().zip(out.into_iter()) {
+            for (tok, expect) in toks.into_iter().zip(expected_toks.into_iter()) {
                 assert_eq!(tok.print(&input), expect, "failed on \"{input}\"");
             }
         }
     }
+}
+
+fn fuzz_test(
+    regs: &[(Regex, Token)],
+    rng: &mut dyn Rng,
+    tok_count: usize,
+) -> (String, Vec<String>) {
+    let firsts: Vec<_> = regs.iter().flat_map(|(r, _)| r.first()).collect();
+    let mut toks = vec![];
+    let mut s = String::new();
+
+    for _ in 0..tok_count {
+        'INNER: loop {
+            let mut pick = rng.gen() % regs.len();
+
+            let (reg, _) = &regs[pick];
+            let mut word = reg.fuzz(rng, 10);
+
+            for i in 0..pick {
+                if regs[i].0.naive_match(&word) {
+                    pick = i;
+                    break;
+                }
+            }
+
+            let (_, t) = &regs[pick];
+            for c in firsts.iter() {
+                word.push(c.unwrap());
+
+                for (r, _) in regs {
+                    if r.naive_match(&word) {
+                        continue 'INNER;
+                    }
+                }
+                word.pop();
+            }
+
+            toks.push(format!("{t}({word})"));
+            s += &word;
+            break;
+        }
+    }
+    (s, toks)
 }
 
 #[test]
