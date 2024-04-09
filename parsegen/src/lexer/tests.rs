@@ -74,9 +74,9 @@ impl LexerRunner for RuntimeLexer {
     }
 }
 
-fn empty_string() -> (Lexer, Vec<(String, Vec<String>)>) {
+fn empty_string() -> (Vec<(Regex, Token)>, Vec<(String, Vec<String>)>) {
     (
-        Lexer::new([(Regex::Empty, Token::new("Empty").unwrap())]),
+        vec![(Regex::Empty, Token::new("Empty").unwrap())],
         vec![
             ("".to_string(), vec!["Empty()".to_string()]),
             (
@@ -88,15 +88,13 @@ fn empty_string() -> (Lexer, Vec<(String, Vec<String>)>) {
     )
 }
 
-fn ident_or_keyword() -> (Lexer, Vec<(String, Vec<String>)>) {
-    let l = Lexer::new([
-        (Regex::keyword("if"), Token::new("If").unwrap()),
-        (Regex::ident(), Token::new("Ident").unwrap()),
-        (Regex::ascii_whitespace(), Token::new("Ws").unwrap()),
-    ]);
-
+fn ident_or_keyword() -> (Vec<(Regex, Token)>, Vec<(String, Vec<String>)>) {
     (
-        l,
+        vec![
+            (Regex::keyword("if"), Token::new("If").unwrap()),
+            (Regex::ident(), Token::new("Ident").unwrap()),
+            (Regex::ascii_whitespace(), Token::new("Ws").unwrap()),
+        ],
         vec![
             ("if".to_string(), vec!["If(if)".to_string()]),
             ("iffy".to_string(), vec!["Ident(iffy)".to_string()]),
@@ -124,9 +122,9 @@ fn ident_or_keyword() -> (Lexer, Vec<(String, Vec<String>)>) {
     )
 }
 
-fn math_expr() -> (Lexer, Vec<(String, Vec<String>)>) {
+fn math_expr() -> (Vec<(Regex, Token)>, Vec<(String, Vec<String>)>) {
     (
-        Lexer::new([
+        vec![
             (Regex::int(), Token::new("Num").unwrap()),
             (Regex::Base('+'), Token::new("Add").unwrap()),
             (Regex::Base('-'), Token::new("Sub").unwrap()),
@@ -137,7 +135,7 @@ fn math_expr() -> (Lexer, Vec<(String, Vec<String>)>) {
             (Regex::Base(','), Token::new("Coma").unwrap()),
             (Regex::ident(), Token::new("Ident").unwrap()),
             (Regex::ascii_whitespace(), Token::new("Ws").unwrap()),
-        ]),
+        ],
         vec![
             ("x".to_string(), vec!["Ident(x)".to_string()]),
             (
@@ -204,11 +202,12 @@ fn rebuild(toks: &[TokenOrGarbage], src: &str) -> String {
 }
 
 pub fn lexer_gauntlet(lr: &mut dyn LexerRunner) {
-    for (name, (l, tests)) in [
+    for (name, (toks, tests)) in [
         ("empty_string", empty_string()),
         ("ident_ok_keyword", ident_or_keyword()),
         ("math_exprt", math_expr()),
     ] {
+        let l = Lexer::new(toks);
         println!("{name}");
         std::fs::write(format!("tests/lexer_{name}.dot"), l.to_string()).unwrap();
         lr.set_lexer(l);
