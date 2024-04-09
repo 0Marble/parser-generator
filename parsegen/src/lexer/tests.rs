@@ -1,4 +1,8 @@
-use crate::Token;
+use std::collections::HashSet;
+
+use rand::thread_rng;
+
+use crate::{fuzzing::Rng, Token};
 
 use super::{regex::Regex, Lexer};
 
@@ -72,20 +76,6 @@ impl LexerRunner for RuntimeLexer {
 
         res
     }
-}
-
-fn empty_string() -> (Vec<(Regex, Token)>, Vec<(String, Vec<String>)>) {
-    (
-        vec![(Regex::Empty, Token::new("Empty").unwrap())],
-        vec![
-            ("".to_string(), vec!["Empty()".to_string()]),
-            (
-                "hello world".to_string(),
-                vec!["Empty()".to_string(), "Garbage(hello world)".to_string()],
-            ),
-            ("Lorem ipsum dolor sit amet, qui minim labore adipisicing minim sint cillum sint consectetur cupidatat.".to_string(),vec!["Empty()".to_string(),"Garbage(Lorem ipsum dolor sit amet, qui minim labore adipisicing minim sint cillum sint consectetur cupidatat.)".to_string()])
-        ],
-    )
 }
 
 fn ident_or_keyword() -> (Vec<(Regex, Token)>, Vec<(String, Vec<String>)>) {
@@ -202,28 +192,81 @@ fn rebuild(toks: &[TokenOrGarbage], src: &str) -> String {
 }
 
 pub fn lexer_gauntlet(lr: &mut dyn LexerRunner) {
-    for (name, (toks, tests)) in [
-        ("empty_string", empty_string()),
+    let mut rng = thread_rng();
+    assert!(Regex::ident().naive_match("ifd"));
+
+    for (name, (regs, tests)) in [
         ("ident_ok_keyword", ident_or_keyword()),
         ("math_exprt", math_expr()),
     ] {
-        let l = Lexer::new(toks);
+        let l = Lexer::new(regs.clone());
         println!("{name}");
         std::fs::write(format!("tests/lexer_{name}.dot"), l.to_string()).unwrap();
         lr.set_lexer(l);
-        for (input, out) in tests {
+
+        for (input, expected_toks) in tests
+            .into_iter()
+            .chain((0..100).map(|_| fuzz_test(&regs, &mut rng, 10)))
+        {
             let toks = lr.traverse(&input);
             let s = rebuild(&toks, &input);
             println!("{s}");
-            println!("{:?}\n{:?}\n", toks, out);
+            println!(
+                "{:?}\n{:?}\n",
+                toks.iter().map(|x| x.print(&input)).collect::<Vec<_>>(),
+                expected_toks
+            );
             assert_eq!(s, input, "failed on \"{input}\"");
-            assert_eq!(toks.len(), out.len(), "failed on \"{input}\"");
+            assert_eq!(toks.len(), expected_toks.len(), "failed on \"{input}\"");
 
-            for (tok, expect) in toks.into_iter().zip(out.into_iter()) {
+            for (tok, expect) in toks.into_iter().zip(expected_toks.into_iter()) {
                 assert_eq!(tok.print(&input), expect, "failed on \"{input}\"");
             }
         }
     }
+}
+
+fn fuzz_test(
+    regs: &[(Regex, Token)],
+    rng: &mut dyn Rng,
+    tok_count: usize,
+) -> (String, Vec<String>) {
+    let firsts: Vec<_> = regs.iter().flat_map(|(r, _)| r.first()).collect();
+    let mut toks = vec![];
+    let mut s = String::new();
+
+    for _ in 0..tok_count {
+        'INNER: loop {
+            let mut pick = rng.gen() % regs.len();
+
+            let (reg, _) = &regs[pick];
+            let mut word = reg.fuzz(rng, 10);
+
+            for i in 0..pick {
+                if regs[i].0.naive_match(&word) {
+                    pick = i;
+                    break;
+                }
+            }
+
+            let (_, t) = &regs[pick];
+            for c in firsts.iter() {
+                word.push(c.unwrap());
+
+                for (r, _) in regs {
+                    if r.naive_match(&word) {
+                        continue 'INNER;
+                    }
+                }
+                word.pop();
+            }
+
+            toks.push(format!("{t}({word})"));
+            s += &word;
+            break;
+        }
+    }
+    (s, toks)
 }
 
 #[test]

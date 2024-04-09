@@ -3,23 +3,22 @@ use crate::lexer::regex::Regex;
 use super::Rng;
 
 impl Regex {
-    pub fn fuzz(&self, rng: &mut dyn Rng) -> String {
+    pub fn fuzz(&self, rng: &mut dyn Rng, loop_count: usize) -> String {
         match self {
-            Regex::Empty => String::new(),
             Regex::Base(c) => c.to_string(),
             Regex::Concat(regs) => regs
                 .iter()
-                .map(|r| r.fuzz(rng))
+                .map(|r| r.fuzz(rng, loop_count))
                 .reduce(|a, b| a + &b)
                 .unwrap_or_default(),
             Regex::Variant(regs) => {
                 let pick = rng.gen() % regs.len();
-                regs[pick].fuzz(rng)
+                regs[pick].fuzz(rng, loop_count)
             }
             Regex::Star(r) => {
-                let count = rng.gen() % 50;
+                let count = rng.gen() % loop_count;
                 (0..count)
-                    .map(|_| r.fuzz(rng))
+                    .map(|_| r.fuzz(rng, loop_count))
                     .reduce(|a, b| a + &b)
                     .unwrap_or_default()
             }
@@ -36,12 +35,12 @@ impl Regex {
             }
             Regex::Option(r) => {
                 if rng.gen() % 2 == 1 {
-                    r.fuzz(rng)
+                    r.fuzz(rng, loop_count)
                 } else {
                     String::new()
                 }
             }
-            Regex::NotChar(chars) => 'OUTER: loop {
+            Regex::NoneOf(chars) => 'OUTER: loop {
                 let mut c = rng.gen() as u32;
                 loop {
                     if c == 0 {

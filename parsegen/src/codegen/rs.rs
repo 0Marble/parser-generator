@@ -17,31 +17,6 @@ use super::Codegen;
 
 pub struct RustCodegen;
 
-fn next_char(mut u: u32) -> Option<char> {
-    loop {
-        if let Some(c) = char::from_u32(u) {
-            return Some(c);
-        }
-
-        if u == u32::MAX {
-            return None;
-        }
-        u += 1;
-    }
-}
-fn prev_char(mut u: u32) -> Option<char> {
-    loop {
-        if let Some(c) = char::from_u32(u) {
-            return Some(c);
-        }
-
-        if u == 0 {
-            return None;
-        }
-        u -= 1;
-    }
-}
-
 impl RustCodegen {
     fn write_lexer(&self, w: &mut dyn Write, lexer: &Lexer) -> std::io::Result<()> {
         writeln!(
@@ -523,7 +498,7 @@ edition = "2021"
 
     impl TestParser for RustParserRunner {
         fn init(&mut self, g: Lgraph, grammar: Grammar) {
-            let lex = Lexer::new(grammar.terminals().map(|t| (Regex::Empty, t)));
+            let lex = Lexer::new(grammar.terminals().map(|t| (Regex::keyword(t.name()), t)));
 
             RustCodegen.gen_code(
                 &lex,

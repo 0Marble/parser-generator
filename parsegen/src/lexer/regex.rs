@@ -1,13 +1,15 @@
+use std::{char, collections::HashSet};
+
 use super::{charset::CharSet, set_automata::SetAutomata};
 
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Regex {
-    Empty,
     Base(char),
     Concat(Vec<Regex>),
     Variant(Vec<Regex>),
     Star(Box<Regex>),
     Range(char, char),
-    NotChar(Vec<char>),
+    NoneOf(Vec<char>),
     NotRange(char, char),
     Option(Box<Regex>),
 }
@@ -15,7 +17,6 @@ pub enum Regex {
 impl Regex {
     pub fn to_nfa(&self) -> SetAutomata {
         match self {
-            Regex::Empty => SetAutomata::new(0).add_end(0),
             Regex::Base(c) => SetAutomata::new(0)
                 .add_edge(0, CharSet::range(*c, *c), 1)
                 .add_end(1),
@@ -60,7 +61,7 @@ impl Regex {
                 let start = nfa.start();
                 nfa.add_end(start)
             }
-            Regex::NotChar(c) => {
+            Regex::NoneOf(c) => {
                 let mut set = CharSet::full();
                 for c in c {
                     set.remove(*c);
@@ -118,5 +119,162 @@ impl Regex {
             ]),
             Regex::Base('0'),
         ])
+    }
+
+    pub fn naive_match(&self, s: &str) -> bool {
+        println!("matching \"{s}\" with {self:?}");
+        match self {
+            Regex::Base(c) => s.chars().count() == 1 && s.starts_with(*c),
+            Regex::Concat(regs) => Self::match_concat(&regs, s),
+            Regex::Variant(regs) => regs.iter().any(|reg| reg.naive_match(s)),
+            Regex::Star(reg) => reg.match_star(s),
+            Regex::Range(a, b) => {
+                if s.chars().count() != 1 {
+                    return false;
+                }
+                let c = s.chars().next().unwrap();
+                (*a..=*b).contains(&c)
+            }
+            Regex::NoneOf(chars) => {
+                if s.chars().count() != 1 {
+                    return false;
+                }
+                let c = s.chars().next().unwrap();
+                !chars.contains(&c)
+            }
+            Regex::NotRange(a, b) => {
+                if s.chars().count() != 1 {
+                    return false;
+                }
+                let c = s.chars().next().unwrap();
+                !(*a..=*b).contains(&c)
+            }
+            Regex::Option(reg) => s.is_empty() || reg.naive_match(s),
+        }
+    }
+
+    fn match_star(&self, s: &str) -> bool {
+        if s.is_empty() {
+            return true;
+        }
+
+        for (i, _) in s.char_indices() {
+            if self.naive_match(&s[..i]) && self.match_star(&s[i..]) {
+                return true;
+            }
+        }
+
+        self.naive_match(s)
+    }
+
+    fn match_concat(regs: &[Self], s: &str) -> bool {
+        if regs.is_empty() {
+            return s.is_empty();
+        }
+        if regs.len() == 1 {
+            return regs[0].naive_match(s);
+        }
+
+        for i in s
+            .char_indices()
+            .map(|(i, _)| i)
+            .chain(std::iter::once(s.len()))
+        {
+            if regs[0].naive_match(&s[..i]) && Self::match_concat(&regs[1..], &s[i..]) {
+                return true;
+            }
+        }
+
+        false
+    }
+
+    pub fn first(&self) -> HashSet<Option<char>> {
+        match self {
+            Regex::Base(c) => [Some(*c)].into(),
+            Regex::Concat(regs) => {
+                let mut res = HashSet::new();
+                for r in regs {
+                    let mut s = r.first();
+                    if !s.remove(&None) {
+                        return res.union(&s).cloned().collect();
+                    }
+                    res = res.union(&s).cloned().collect();
+                }
+                res
+            }
+            Regex::Variant(regs) => regs.iter().flat_map(|r| r.first()).collect(),
+            Regex::Star(r) => r.first().into_iter().chain([None].into_iter()).collect(),
+            Regex::Range(a, b) => {
+                let mut res = HashSet::new();
+                for i in (*a as u32)..=(*b as u32) {
+                    if let Some(c) = char::from_u32(i) {
+                        res.insert(Some(c));
+                    }
+                }
+                res
+            }
+            Regex::NoneOf(chars) => {
+                let mut res = HashSet::new();
+                for i in 0..=u32::MAX {
+                    if let Some(c) = char::from_u32(i) {
+                        if chars.contains(&c) {
+                            continue;
+                        }
+                        res.insert(Some(c));
+                    }
+                }
+                res
+            }
+            Regex::NotRange(a, b) => {
+                let mut res = HashSet::new();
+                for i in 0..=u32::MAX {
+                    if let Some(c) = char::from_u32(i) {
+                        if (*a..=*b).contains(&c) {
+                            continue;
+                        }
+                        res.insert(Some(c));
+                    }
+                }
+                res
+            }
+            Regex::Option(r) => r.first().into_iter().chain([None].into_iter()).collect(),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use rand::thread_rng;
+
+    use super::*;
+
+    #[test]
+    fn naive_match() {
+        let mut rng = thread_rng();
+        let r = Regex::ascii_digits();
+        for _ in 0..100 {
+            assert!(r.naive_match(&r.fuzz(&mut rng, 10)));
+        }
+
+        let r = Regex::keyword("return");
+        for _ in 0..100 {
+            assert!(r.naive_match(&r.fuzz(&mut rng, 10)));
+        }
+        let r = Regex::keyword("if");
+        for _ in 0..100 {
+            assert!(r.naive_match(&r.fuzz(&mut rng, 10)));
+        }
+
+        let r = Regex::ident();
+        for _ in 0..100 {
+            let w = r.fuzz(&mut rng, 10);
+            assert!(r.naive_match(&w), "failed on \"{w}\"");
+            println!();
+        }
+
+        let r = Regex::int();
+        for _ in 0..100 {
+            assert!(r.naive_match(&r.fuzz(&mut rng, 10)));
+        }
     }
 }
