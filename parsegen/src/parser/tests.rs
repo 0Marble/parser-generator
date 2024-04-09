@@ -1,5 +1,7 @@
 use std::{collections::VecDeque, str::FromStr, string::FromUtf8Error};
 
+use rand::thread_rng;
+
 use crate::{parser::optimizations::Optimization, Token};
 
 use super::{
@@ -243,6 +245,7 @@ VALS -> VALUE t_coma VALS | ;
 }
 
 pub fn ll1_gauntlet(t: &mut dyn TestParser) {
+    let mut rng = thread_rng();
     for (grammar, name) in [
         (empty_language(), "empty_language"),
         (finite_language(), "finite_language"),
@@ -264,26 +267,18 @@ pub fn ll1_gauntlet(t: &mut dyn TestParser) {
             grammar
         );
 
-        // for (toks, tree) in g.possible_words(&grammar).take(100) {
-        //     let s = toks.iter().fold(String::new(), |mut acc, tok| {
-        //         acc += tok.name();
-        //         acc += " ";
-        //         acc
-        //     });
-        //     assert_eq!(
-        //         grammar.parse(&toks),
-        //         Some(tree.strip_suffix("$, ").unwrap().to_string()),
-        //         "failed on \n\tgrammar={grammar}\n\tinput={s}\n",
-        //     );
-        // }
-
         t.init(g, grammar.clone());
-        for (toks, tree) in grammar.possible_words().take(500) {
+        for _ in 0..100 {
+            let tree = grammar.fuzz(&mut rng, 1000);
+            let toks: Vec<_> = tree.leafs().collect();
             let s = toks.iter().fold(String::new(), |mut acc, tok| {
                 acc += tok.name();
                 acc += " ";
                 acc
             });
+            // use std::io::Write;
+            // writeln!(std::io::stderr(), "{s}").unwrap();
+
             let nodes = t.parse(&toks).unwrap();
             assert_eq!(nodes, tree, "\tgrammar: {grammar}\n\ttoks: {s}");
         }
@@ -322,6 +317,7 @@ fn an_bm_c() -> Grammar {
 }
 
 pub fn slr_gauntlet(t: &mut dyn TestParser) {
+    let mut rng = thread_rng();
     for (grammar, name) in [
         (an_bm_c(), "an_bm_c"),
         (empty_language(), "empty_language"),
@@ -347,28 +343,20 @@ pub fn slr_gauntlet(t: &mut dyn TestParser) {
             grammar
         );
 
-        // for (toks, tree) in g.possible_words(&grammar).take(10) {
-        //     let s = toks.iter().fold(String::new(), |mut acc, tok| {
-        //         acc += tok.name();
-        //         acc += " ";
-        //         acc
-        //     });
-        //     assert_eq!(
-        //         grammar.parse(&toks),
-        //         Some(tree),
-        //         "failed on \n\tgrammar={grammar}\n\tinput={s}\n",
-        //     );
-        // }
-
         t.init(g, grammar.clone());
-        for (toks, tree) in grammar.possible_words().take(500) {
+        for _ in 0..100 {
+            let tree = grammar.fuzz(&mut rng, 1000);
+            let toks: Vec<_> = tree.leafs().collect();
             let s = toks.iter().fold(String::new(), |mut acc, tok| {
                 acc += tok.name();
                 acc += " ";
                 acc
             });
-            let res = t.parse(&toks).unwrap();
-            assert_eq!(res, tree, "\tgrammar: {grammar}\n\ttoks: {s}");
+            // use std::io::Write;
+            // writeln!(std::io::stderr(), "{s}").unwrap();
+
+            let nodes = t.parse(&toks).unwrap();
+            assert_eq!(nodes, tree, "\tgrammar: {grammar}\n\ttoks: {s}");
         }
     }
 }

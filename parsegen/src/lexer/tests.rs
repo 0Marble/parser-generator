@@ -45,7 +45,6 @@ impl LexerRunner for RuntimeLexer {
         let mut tok_start = 0;
         let mut len = 0;
         for (i, c) in s.char_indices() {
-            print!("->{cur}-{c}");
             len = i + 1;
 
             let next = l.step(cur, c);
@@ -65,7 +64,6 @@ impl LexerRunner for RuntimeLexer {
             }
         }
 
-        println!("->{cur}->");
         if let Some(tok) = l.accept_token(cur) {
             res.push(TokenOrGarbage::Token(tok, tok_start, len - tok_start));
         } else {
@@ -81,8 +79,11 @@ fn empty_string() -> (Lexer, Vec<(String, Vec<String>)>) {
         Lexer::new([(Regex::Empty, Token::new("Empty").unwrap())]),
         vec![
             ("".to_string(), vec!["Empty()".to_string()]),
-            ("hello world".to_string(), vec!["Empty()".to_string(), "Garbage(hello world)".to_string()]),
-            ("Lorem ipsum dolor sit amet, officia excepteur ex fugiat reprehenderit enim labore culpa sint ad nisi Lorem pariatur mollit ex esse exercitation amet. Nisi anim cupidatat excepteur officia. Reprehenderit nostrud nostrud ipsum Lorem est aliquip amet voluptate voluptate dolor minim nulla est proident. Nostrud officia pariatur ut officia. Sit irure elit esse ea nulla sunt ex occaecat reprehenderit commodo officia dolor Lorem duis laboris cupidatat officia voluptate. Culpa proident adipisicing id nulla nisi laboris ex in Lorem sunt duis officia eiusmod. Aliqua reprehenderit commodo ex non excepteur duis sunt velit enim. Voluptate laboris sint cupidatat ullamco ut ea consectetur et est culpa et culpa duis.".to_string(), vec!["Empty()".to_string(),"Garbage(Lorem ipsum dolor sit amet, officia excepteur ex fugiat reprehenderit enim labore culpa sint ad nisi Lorem pariatur mollit ex esse exercitation amet. Nisi anim cupidatat excepteur officia. Reprehenderit nostrud nostrud ipsum Lorem est aliquip amet voluptate voluptate dolor minim nulla est proident. Nostrud officia pariatur ut officia. Sit irure elit esse ea nulla sunt ex occaecat reprehenderit commodo officia dolor Lorem duis laboris cupidatat officia voluptate. Culpa proident adipisicing id nulla nisi laboris ex in Lorem sunt duis officia eiusmod. Aliqua reprehenderit commodo ex non excepteur duis sunt velit enim. Voluptate laboris sint cupidatat ullamco ut ea consectetur et est culpa et culpa duis.)".to_string()]),
+            (
+                "hello world".to_string(),
+                vec!["Empty()".to_string(), "Garbage(hello world)".to_string()],
+            ),
+            ("Lorem ipsum dolor sit amet, qui minim labore adipisicing minim sint cillum sint consectetur cupidatat.".to_string(),vec!["Empty()".to_string(),"Garbage(Lorem ipsum dolor sit amet, qui minim labore adipisicing minim sint cillum sint consectetur cupidatat.)".to_string()])
         ],
     )
 }

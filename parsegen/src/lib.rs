@@ -6,6 +6,9 @@ pub mod lexer;
 pub mod parser;
 // pub mod tokenizer;
 
+#[cfg(test)]
+mod fuzzing;
+
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Token {
     name: Rc<str>,

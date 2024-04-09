@@ -1,21 +1,20 @@
 use super::{charset::CharSet, set_automata::SetAutomata};
 
 pub enum Regex {
-    None,
     Empty,
     Base(char),
     Concat(Vec<Regex>),
     Variant(Vec<Regex>),
     Star(Box<Regex>),
     Range(char, char),
-    Not(Box<Regex>),
+    NotChar(Vec<char>),
+    NotRange(char, char),
     Option(Box<Regex>),
 }
 
 impl Regex {
     pub fn to_nfa(&self) -> SetAutomata {
         match self {
-            Regex::None => SetAutomata::new(0),
             Regex::Empty => SetAutomata::new(0).add_end(0),
             Regex::Base(c) => SetAutomata::new(0)
                 .add_edge(0, CharSet::range(*c, *c), 1)
@@ -56,12 +55,21 @@ impl Regex {
             Regex::Range(min, max) => SetAutomata::new(0)
                 .add_edge(0, CharSet::range(*min, *max), 1)
                 .add_end(1),
-            Regex::Not(r) => r.to_nfa().complement(),
             Regex::Option(r) => {
                 let nfa = r.to_nfa();
                 let start = nfa.start();
                 nfa.add_end(start)
             }
+            Regex::NotChar(c) => {
+                let mut set = CharSet::full();
+                for c in c {
+                    set.remove(*c);
+                }
+                SetAutomata::new(0).add_edge(0, set, 1).add_end(1)
+            }
+            Regex::NotRange(a, b) => SetAutomata::new(0)
+                .add_edge(0, CharSet::range(*a, *b).complement(), 1)
+                .add_end(1),
         }
     }
 
@@ -109,28 +117,6 @@ impl Regex {
                 Self::uint(),
             ]),
             Regex::Base('0'),
-        ])
-    }
-
-    pub fn double_slash_comment() -> Regex {
-        Regex::Concat(vec![
-            Regex::Base('/'),
-            Regex::Base('/'),
-            Regex::Star(Box::new(Regex::Not(Box::new(Regex::Base('\n'))))),
-            Regex::Base('\n'),
-        ])
-    }
-
-    pub fn multiline_comment() -> Regex {
-        Regex::Concat(vec![
-            Regex::Base('/'),
-            Regex::Base('*'),
-            Regex::Not(Box::new(Regex::Concat(vec![
-                Regex::Base('*'),
-                Regex::Base('/'),
-            ]))),
-            Regex::Base('*'),
-            Regex::Base('/'),
         ])
     }
 }
