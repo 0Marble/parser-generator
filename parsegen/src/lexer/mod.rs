@@ -44,7 +44,6 @@ impl Lexer {
 
         for (rg, tok) in regexes {
             let rg_nfa = rg.to_nfa().determine().0.minimize(false).0;
-            std::fs::write(format!("tests/lexer_nfa_{tok}.dot"), rg_nfa.to_string()).unwrap();
             let t = nfa.nodes().max().unwrap_or_default() + 1;
             let (new_nfa, new_names) = nfa.union(&rg_nfa);
             nfa = new_nfa;
@@ -68,10 +67,6 @@ impl Lexer {
 
         let (dfa, dfa_nodes) = nfa.determine();
         let (mdfa, mdfa_nodes) = dfa.minimize(true);
-        println!("{tokens:?}\n{dfa_nodes:?}\n{mdfa_nodes:?}\n");
-        std::fs::write("tests/lexer_nfa.dot", nfa.to_string()).unwrap();
-        std::fs::write("tests/lexer_dfa.dot", dfa.to_string()).unwrap();
-        std::fs::write("tests/lexer_mdfa.dot", mdfa.to_string()).unwrap();
 
         let mut new_tokens = vec![];
         for (old_node, tok) in tokens {
@@ -85,7 +80,6 @@ impl Lexer {
                 }
             }
         }
-        println!("{new_tokens:?}");
 
         Lexer {
             dead_states: mdfa.dead_states().collect(),
@@ -133,6 +127,10 @@ impl Lexer {
             .map(|(_, tok)| tok.clone())
     }
 
+    pub fn tokens(&self) -> impl Iterator<Item = (usize, Token)> + '_ {
+        self.tokens.iter().cloned()
+    }
+
     pub fn start(&self) -> usize {
         self.dfa.start()
     }
@@ -146,4 +144,4 @@ impl Lexer {
 }
 
 #[cfg(test)]
-mod tests;
+pub mod tests;

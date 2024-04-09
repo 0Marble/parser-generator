@@ -3,7 +3,7 @@ use std::{collections::VecDeque, str::FromStr, string::FromUtf8Error};
 use crate::{parser::optimizations::Optimization, Token};
 
 use super::{
-    grammar::{Grammar, TokenOrEnd},
+    grammar::{Grammar, Node, ParseTree, TokenOrEnd},
     lgraph::{Lgraph, Lookahead, Path, Stack},
 };
 
@@ -105,7 +105,7 @@ impl TestParser for RuntimeParser {
         self.g = Some(g);
         self.grammar = Some(grammar);
     }
-    fn parse(&self, toks: &[Token]) -> Result<Path, TraverseError> {
+    fn parse(&self, toks: &[Token]) -> Result<ParseTree, TraverseError> {
         let g = self.g.as_ref().unwrap();
         let mut path = Path::Empty(g.start());
 
@@ -158,13 +158,13 @@ impl TestParser for RuntimeParser {
             return Err(TraverseError::StackNotEmptied(stack));
         }
 
-        Ok(path)
+        Ok(path.to_parse_tree(self.grammar.as_ref().unwrap()))
     }
 }
 
 pub trait TestParser {
     fn init(&mut self, g: Lgraph, grammar: Grammar);
-    fn parse(&self, toks: &[Token]) -> Result<Path, TraverseError>;
+    fn parse(&self, toks: &[Token]) -> Result<ParseTree, TraverseError>;
 }
 
 fn parens_grammar_simple() -> Grammar {
@@ -203,40 +203,40 @@ S -> FUNCTIONS;
 FUNCTIONS -> FUNCTION FUNCTIONS;
 FUNCTIONS -> ;
 FUNCTION -> SIGNATURE BLOCK;
-SIGNATURE -> ident lp LIST rp;
-BLOCK -> lb STATEMENTS rb;
+SIGNATURE -> t_ident t_lp LIST t_rp;
+BLOCK -> t_lb STATEMENTS t_rb;
 LIST -> FULLLIST;
 LIST -> ;
-FULLLIST -> ident coma LIST;
+FULLLIST -> t_ident t_coma LIST;
 STATEMENTS -> DO;
 STATEMENTS -> LET;
 STATEMENTS -> IF;
 STATEMENTS -> WHILE;
 STATEMENTS -> RETURN;
-DO -> do ASSIGNABLE eq EXPR;
-ASSIGNABLE -> ident;
-ASSIGNABLE -> ls EXPR rs ident;
-LET -> let ident eq EXPR;
-IF -> if EXPR BLOCK;
-WHILE -> while EXPR BLOCK;
-RETURN -> return EXPR;
-EXPR -> ident;
-EXPR -> call ident lp EXPRLIST rp;
+DO -> t_do ASSIGNABLE t_eq EXPR;
+ASSIGNABLE -> t_ident;
+ASSIGNABLE -> t_ls EXPR t_rs t_ident;
+LET -> t_let t_ident t_eq EXPR;
+IF -> t_if EXPR BLOCK;
+WHILE -> t_while EXPR BLOCK;
+RETURN -> t_return EXPR;
+EXPR -> t_ident;
+EXPR -> t_call t_ident t_lp EXPRLIST t_rp;
 EXPRLIST -> FULLEXPRLIST;
 EXPRLIST -> ;
-FULLEXPRLIST -> EXPR coma EXPRLIST;";
+FULLEXPRLIST -> EXPR t_coma EXPRLIST;";
     Grammar::from_str(s).unwrap()
 }
 
 fn json_grammar() -> Grammar {
     Grammar::from_str(
         "
-VALUE -> OBJ | ARRAY | num | string;
-OBJ -> lb KEYVALS rb;
-ARRAY -> ls VALS rs;
-KEYVALS -> KEYVAL coma KEYVALS | ;
-KEYVAL -> q ident q semi VALUE;
-VALS -> VALUE coma VALS | ;
+VALUE -> OBJ | ARRAY | t_num | t_string;
+OBJ -> t_lb KEYVALS t_rb;
+ARRAY -> t_ls VALS t_rs;
+KEYVALS -> KEYVAL t_coma KEYVALS | ;
+KEYVAL -> t_q t_ident t_q t_semi VALUE;
+VALS -> VALUE t_coma VALS | ;
 ",
     )
     .unwrap()
@@ -284,9 +284,8 @@ pub fn ll1_gauntlet(t: &mut dyn TestParser) {
                 acc += " ";
                 acc
             });
-            let path = t.parse(&toks).unwrap();
-            let res = path.to_parse_tree(&grammar);
-            assert_eq!(res, tree, "\tgrammar: {grammar}\n\ttoks: {s}");
+            let nodes = t.parse(&toks).unwrap();
+            assert_eq!(nodes, tree, "\tgrammar: {grammar}\n\ttoks: {s}");
         }
     }
 }
@@ -368,8 +367,7 @@ pub fn slr_gauntlet(t: &mut dyn TestParser) {
                 acc += " ";
                 acc
             });
-            let path = t.parse(&toks).unwrap();
-            let res = path.to_parse_tree(&grammar);
+            let res = t.parse(&toks).unwrap();
             assert_eq!(res, tree, "\tgrammar: {grammar}\n\ttoks: {s}");
         }
     }
