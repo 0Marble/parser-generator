@@ -122,7 +122,6 @@ impl Regex {
     }
 
     pub fn naive_match(&self, s: &str) -> bool {
-        println!("matching \"{s}\" with {self:?}");
         match self {
             Regex::Base(c) => s.chars().count() == 1 && s.starts_with(*c),
             Regex::Concat(regs) => Self::match_concat(&regs, s),
@@ -240,11 +239,255 @@ impl Regex {
             Regex::Option(r) => r.first().into_iter().chain([None].into_iter()).collect(),
         }
     }
+
+    pub fn parse(it: impl IntoIterator<Item = char>) -> Self {
+        use crate::lexer::reg_lexer::Lexer;
+        use crate::lexer::reg_lexer::Token as RegToken;
+        use crate::lexer::reg_lexer::TokenType;
+        use crate::lexer::reg_parse::Parser;
+        use crate::lexer::reg_parse::Symbol;
+
+        let mut lex = Lexer::new();
+        let mut toks = vec![];
+
+        for c in it {
+            if let Some(tok) = lex.eat_char(c) {
+                toks.push(tok);
+            }
+        }
+        toks.push(lex.finalize());
+
+        let mut parse = Parser::new();
+        let mut stack = vec![];
+
+        #[derive(Debug)]
+        enum StackSym {
+            Token(RegToken),
+            LetterList(Vec<char>),
+            Regex(Regex),
+        }
+        toks.push(RegToken::Token(TokenType::_End, "".into()));
+
+        let mut tok_count = 0;
+
+        // println!();
+        for t in &toks {
+            for sym in parse.eat_tok(t.get_type().unwrap()) {
+                // println!("{sym:?}, {stack:?}");
+
+                match sym {
+                    Symbol::cap
+                    | Symbol::dash
+                    | Symbol::lp
+                    | Symbol::ls
+                    | Symbol::or
+                    | Symbol::plus
+                    | Symbol::question
+                    | Symbol::rp
+                    | Symbol::rs
+                    | Symbol::star
+                    | Symbol::letter => {
+                        stack.push(StackSym::Token(toks[tok_count].clone()));
+                        tok_count += 1;
+                    }
+                    Symbol::ConcatEnd(2) => {
+                        let StackSym::Regex(a) = stack.pop().unwrap() else {
+                            panic!()
+                        };
+                        let StackSym::Regex(b) = stack.pop().unwrap() else {
+                            panic!()
+                        };
+                        stack.push(StackSym::Regex(Regex::Concat(vec![b, a])))
+                    }
+                    Symbol::ConcatEnd(3) => {
+                        let StackSym::Regex(b) = stack.pop().unwrap() else {
+                            panic!()
+                        };
+                        stack.push(StackSym::Regex(b))
+                    }
+                    Symbol::ElemEnd(4) => {
+                        let StackSym::Token(RegToken::Token(TokenType::letter, letter)) =
+                            stack.pop().unwrap()
+                        else {
+                            panic!()
+                        };
+                        stack.push(StackSym::Regex(Regex::Base(Self::escape_reg(&letter))));
+                    }
+                    Symbol::ElemEnd(5) => {
+                        stack.pop();
+                        let StackSym::Token(RegToken::Token(TokenType::letter, a)) =
+                            stack.pop().unwrap()
+                        else {
+                            panic!()
+                        };
+                        stack.pop();
+                        let StackSym::Token(RegToken::Token(TokenType::letter, b)) =
+                            stack.pop().unwrap()
+                        else {
+                            panic!()
+                        };
+                        stack.pop();
+
+                        let a = Self::escape_reg(&a);
+                        let b = Self::escape_reg(&b);
+                        stack.push(StackSym::Regex(Regex::Range(b, a)));
+                    }
+                    Symbol::ElemEnd(6) => {
+                        stack.pop();
+                        let StackSym::Token(RegToken::Token(TokenType::letter, a)) =
+                            stack.pop().unwrap()
+                        else {
+                            panic!()
+                        };
+                        stack.pop();
+                        let StackSym::Token(RegToken::Token(TokenType::letter, b)) =
+                            stack.pop().unwrap()
+                        else {
+                            panic!()
+                        };
+                        stack.pop();
+                        stack.pop();
+
+                        let a = Self::escape_reg(&a);
+                        let b = Self::escape_reg(&b);
+                        stack.push(StackSym::Regex(Regex::NotRange(b, a)));
+                    }
+                    Symbol::ElemEnd(7) => {
+                        stack.pop();
+                        let StackSym::LetterList(l) = stack.pop().unwrap() else {
+                            panic!()
+                        };
+                        stack.pop();
+                        stack.push(StackSym::Regex(Regex::Variant(
+                            l.into_iter().map(Regex::Base).collect(),
+                        )))
+                    }
+                    Symbol::ElemEnd(8) => {
+                        stack.pop();
+                        let StackSym::LetterList(l) = stack.pop().unwrap() else {
+                            panic!()
+                        };
+                        stack.pop();
+                        stack.pop();
+                        stack.push(StackSym::Regex(Regex::NoneOf(l)))
+                    }
+                    Symbol::ElemEnd(9) => {
+                        stack.pop();
+                        let StackSym::Regex(r) = stack.pop().unwrap() else {
+                            panic!()
+                        };
+                        stack.pop();
+
+                        stack.push(StackSym::Regex(r))
+                    }
+                    Symbol::ElemEnd(10) => {
+                        stack.pop();
+                        let StackSym::Regex(r) = stack.pop().unwrap() else {
+                            panic!()
+                        };
+
+                        stack.push(StackSym::Regex(Regex::Star(Box::new(r))))
+                    }
+                    Symbol::ElemEnd(11) => {
+                        stack.pop();
+                        let StackSym::Regex(r) = stack.pop().unwrap() else {
+                            panic!()
+                        };
+
+                        stack.push(StackSym::Regex(Regex::Concat(vec![
+                            r.clone(),
+                            Regex::Star(Box::new(r)),
+                        ])))
+                    }
+                    Symbol::ElemEnd(12) => {
+                        stack.pop();
+                        let StackSym::Regex(r) = stack.pop().unwrap() else {
+                            panic!()
+                        };
+
+                        stack.push(StackSym::Regex(Regex::Option(Box::new(r))))
+                    }
+                    Symbol::LetterListEnd(13) => {
+                        let StackSym::LetterList(mut letters) = stack.pop().unwrap() else {
+                            panic!()
+                        };
+                        let StackSym::Token(RegToken::Token(TokenType::letter, letter)) =
+                            stack.pop().unwrap()
+                        else {
+                            panic!()
+                        };
+                        letters.push(Self::escape_reg(&letter));
+                        stack.push(StackSym::LetterList(letters));
+                    }
+                    Symbol::LetterListEnd(14) => {
+                        let StackSym::Token(RegToken::Token(TokenType::letter, letter)) =
+                            stack.pop().unwrap()
+                        else {
+                            panic!()
+                        };
+                        stack.push(StackSym::LetterList(vec![Self::escape_reg(&letter)]));
+                    }
+                    Symbol::VariantEnd(0) => {
+                        let StackSym::Regex(a) = stack.pop().unwrap() else {
+                            panic!()
+                        };
+                        stack.pop();
+                        let StackSym::Regex(b) = stack.pop().unwrap() else {
+                            panic!()
+                        };
+                        stack.push(StackSym::Regex(Regex::Variant(vec![b, a])))
+                    }
+                    Symbol::VariantEnd(1) => {
+                        let StackSym::Regex(b) = stack.pop().unwrap() else {
+                            panic!()
+                        };
+                        stack.push(StackSym::Regex(b))
+                    }
+                    _ => (),
+                }
+            }
+        }
+
+        assert!(parse.is_end());
+
+        let StackSym::Regex(res) = stack.pop().unwrap() else {
+            panic!();
+        };
+        res
+    }
+
+    fn escape_reg(s: &str) -> char {
+        match s {
+            "\\\\" => '\\',
+            "\\|" => '|',
+            "\\*" => '*',
+            "\\+" => '+',
+            "\\?" => '?',
+            "\\(" => '(',
+            "\\)" => ')',
+            "\\[" => '[',
+            "\\]" => ']',
+            "\\-" => '-',
+            _ => {
+                assert_eq!(s.chars().count(), 1);
+                s.chars().next().unwrap()
+            }
+        }
+    }
 }
 
 #[cfg(test)]
 mod tests {
+    use std::{process::Command, str::FromStr};
+
     use rand::thread_rng;
+
+    use crate::{
+        codegen::{rs::RustCodegen, Codegen},
+        lexer::Lexer,
+        parser::{grammar::Grammar, lgraph::Lgraph, optimizations::Optimization},
+        Token,
+    };
 
     use super::*;
 
@@ -276,5 +519,121 @@ mod tests {
         for _ in 0..100 {
             assert!(r.naive_match(&r.fuzz(&mut rng, 10)));
         }
+    }
+
+    // #[test]
+    fn gen_parser() {
+        let g = Grammar::from_str(
+            "\
+Variant -> Concat or Variant | Concat; 
+Concat -> Elem Concat | Elem; 
+Elem -> letter | ls letter dash letter rs | ls cap letter dash letter rs | 
+                ls LetterList rs | ls cap LetterList rs | lp Variant rp |
+                Elem star | Elem plus | Elem question;
+LetterList -> letter LetterList | letter;",
+        )
+        .unwrap();
+        let lg = Lgraph::slr(&g).optimize(Optimization::all());
+
+        let lex = Lexer::new([
+            (Regex::Base('|'), Token::new("or").unwrap()),
+            (Regex::Base('*'), Token::new("star").unwrap()),
+            (Regex::Base('+'), Token::new("plus").unwrap()),
+            (Regex::Base('?'), Token::new("question").unwrap()),
+            (Regex::Base('^'), Token::new("cap").unwrap()),
+            (Regex::Base('('), Token::new("lp").unwrap()),
+            (Regex::Base(')'), Token::new("rp").unwrap()),
+            (Regex::Base('['), Token::new("ls").unwrap()),
+            (Regex::Base(']'), Token::new("rs").unwrap()),
+            (Regex::Base('-'), Token::new("dash").unwrap()),
+            (
+                Regex::Variant(vec![
+                    Regex::NoneOf(vec!['\\', '|', '*', '+', '?', '^', '(', ')', '[', ']', '-']),
+                    Regex::Concat(vec![Regex::Base('\\'), Regex::Base('\\')]),
+                    Regex::Concat(vec![Regex::Base('\\'), Regex::Base('|')]),
+                    Regex::Concat(vec![Regex::Base('\\'), Regex::Base('*')]),
+                    Regex::Concat(vec![Regex::Base('\\'), Regex::Base('+')]),
+                    Regex::Concat(vec![Regex::Base('\\'), Regex::Base('?')]),
+                    Regex::Concat(vec![Regex::Base('\\'), Regex::Base('^')]),
+                    Regex::Concat(vec![Regex::Base('\\'), Regex::Base('(')]),
+                    Regex::Concat(vec![Regex::Base('\\'), Regex::Base(')')]),
+                    Regex::Concat(vec![Regex::Base('\\'), Regex::Base('[')]),
+                    Regex::Concat(vec![Regex::Base('\\'), Regex::Base(']')]),
+                    Regex::Concat(vec![Regex::Base('\\'), Regex::Base('-')]),
+                ]),
+                Token::new("letter").unwrap(),
+            ),
+        ]);
+
+        RustCodegen.gen_code(&lex, &lg, &g, "tests", "regex");
+    }
+
+    #[test]
+    fn parse_regex() {
+        let r = Regex::parse("a|b".chars());
+        assert!(r.naive_match("a"));
+        assert!(r.naive_match("b"));
+        assert!(!r.naive_match("c"));
+
+        let r = Regex::parse("a*".chars());
+        assert!(r.naive_match(""));
+        assert!(r.naive_match("a"));
+        assert!(r.naive_match("aaaaaa"));
+        assert!(!r.naive_match("aabaaa"));
+
+        let r = Regex::parse("a+".chars());
+        assert!(!r.naive_match(""));
+        assert!(r.naive_match("a"));
+        assert!(r.naive_match("aaaaaa"));
+        assert!(!r.naive_match("aabaaa"));
+
+        let r = Regex::parse("a?".chars());
+        assert!(r.naive_match(""));
+        assert!(r.naive_match("a"));
+        assert!(!r.naive_match("b"));
+        assert!(!r.naive_match("aaaaaa"));
+        assert!(!r.naive_match("aabaaa"));
+
+        let r = Regex::parse("[a-z]".chars());
+        assert!(r.naive_match("a"));
+        assert!(r.naive_match("p"));
+        assert!(r.naive_match("z"));
+        assert!(!r.naive_match("0"));
+
+        let r = Regex::parse("[^a-z]".chars());
+        assert!(!r.naive_match("a"));
+        assert!(!r.naive_match("p"));
+        assert!(!r.naive_match("z"));
+        assert!(r.naive_match("0"));
+
+        let r = Regex::parse("[abc]".chars());
+        assert!(r.naive_match("a"));
+        assert!(r.naive_match("b"));
+        assert!(r.naive_match("c"));
+        assert!(!r.naive_match("d"));
+
+        let r = Regex::parse("[^abc]".chars());
+        assert!(!r.naive_match("a"));
+        assert!(!r.naive_match("b"));
+        assert!(!r.naive_match("c"));
+        assert!(r.naive_match("d"));
+
+        let r = Regex::parse("abcde".chars());
+        assert!(r.naive_match("abcde"));
+        assert!(!r.naive_match(""));
+        assert!(!r.naive_match("a"));
+        assert!(!r.naive_match("ab"));
+        assert!(!r.naive_match("abc"));
+        assert!(!r.naive_match("abcd"));
+
+        let r = Regex::parse("\\-?[0-9]+(.[0-9]+)?".chars());
+        assert!(r.naive_match("0"));
+        assert!(r.naive_match("1.2"));
+        assert!(r.naive_match("23141.12311"));
+        assert!(r.naive_match("-12.23"));
+        assert!(!r.naive_match("0."));
+        assert!(!r.naive_match(".212"));
+        assert!(!r.naive_match("12.21.123"));
+        assert!(!r.naive_match("hello"));
     }
 }
