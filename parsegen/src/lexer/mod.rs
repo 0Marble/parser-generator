@@ -5,6 +5,8 @@ use crate::Token;
 use self::{charset::CharSet, regex::Regex, set_automata::SetAutomata};
 
 pub mod charset;
+mod reg_lexer;
+mod reg_parse;
 pub mod regex;
 pub mod set_automata;
 
