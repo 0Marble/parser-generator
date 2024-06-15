@@ -5,7 +5,7 @@ use rand::thread_rng;
 use crate::{parser::optimizations::Optimization, Token};
 
 use super::{
-    grammar::{Grammar, Node, ParseTree, TokenOrEnd},
+    grammar::{Grammar, ParseTree, TokenOrEnd},
     lgraph::{Lgraph, Lookahead, Path, Stack},
 };
 
@@ -276,8 +276,6 @@ pub fn ll1_gauntlet(t: &mut dyn TestParser) {
                 acc += " ";
                 acc
             });
-            // use std::io::Write;
-            // writeln!(std::io::stderr(), "{s}").unwrap();
 
             let nodes = t.parse(&toks).unwrap();
             assert_eq!(nodes, tree, "\tgrammar: {grammar}\n\ttoks: {s}");

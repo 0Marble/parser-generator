@@ -484,12 +484,14 @@ impl Path {
     }
 
     pub fn to_parse_tree(&self, g: &Grammar) -> ParseTree {
+        println!("{}", self);
         let mut stack = vec![];
         for n in self.postfix_output() {
             match n {
                 Node::Leaf(t) => stack.push(ParseTree::new(t)),
-                Node::RuleEnd(prod_idx, _) => {
+                Node::RuleEnd(prod_idx, nt) => {
                     let prod = g.productions().nth(prod_idx).unwrap();
+                    assert!(prod.lhs() == nt);
                     let mut parent = ParseTree::new(prod.lhs());
                     parent.replace_with_production(0, prod, prod_idx);
 
