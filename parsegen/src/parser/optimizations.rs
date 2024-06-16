@@ -19,9 +19,9 @@ impl Optimization {
             Self::Deadend,
             Self::EmptyEdge,
             Self::BackMerge,
-            // Self::Diamonds,
-            // Self::UselessBrackets,
-            // Self::UselessLookahead,
+            Self::Diamonds,
+            Self::UselessBrackets,
+            Self::UselessLookahead,
         ]
     }
 }
@@ -41,31 +41,61 @@ impl Lgraph {
                 if opts.contains(&O::UselessLookahead) {
                     let (next, step) = self.useless_lookahead();
                     self = next;
+                    // std::fs::write(
+                    //     format!("tests/optimize_useless_lookahead_{count}.dot"),
+                    //     self.to_string(),
+                    // )
+                    // .unwrap();
                     res |= step;
                 }
                 if opts.contains(&O::BackMerge) {
                     let (next, step) = self.back_merge();
                     self = next;
+                    // std::fs::write(
+                    //     format!("tests/optimize_backmerge_{count}.dot"),
+                    //     self.to_string(),
+                    // )
+                    // .unwrap();
                     res |= step;
                 }
                 if opts.contains(&O::EmptyEdge) {
                     let (next, step) = self.empty_edges();
                     self = next;
+                    // std::fs::write(
+                    //     format!("tests/optimize_empty_edge_{count}.dot"),
+                    //     self.to_string(),
+                    // )
+                    // .unwrap();
                     res |= step;
                 }
                 if opts.contains(&O::Diamonds) {
                     let (next, step) = self.merge_diamonds();
                     self = next;
+                    // std::fs::write(
+                    //     format!("tests/optimize_diamonds_{count}.dot"),
+                    //     self.to_string(),
+                    // )
+                    // .unwrap();
                     res |= step;
                 }
                 if opts.contains(&O::UselessBrackets) {
                     let (next, step) = self.useless_brackets();
                     self = next;
+                    // std::fs::write(
+                    //     format!("tests/optimize_useless_brackets_{count}.dot"),
+                    //     self.to_string(),
+                    // )
+                    // .unwrap();
                     res |= step;
                 }
                 if opts.contains(&O::Deadend) {
                     let (next, step) = self.deadends();
                     self = next;
+                    // std::fs::write(
+                    //     format!("tests/optimize_deadend_{count}.dot"),
+                    //     self.to_string(),
+                    // )
+                    // .unwrap();
                     res |= step;
                 }
 
@@ -284,7 +314,7 @@ impl Lgraph {
                         continue 'OUTER;
                     };
 
-                    if b2.index() != b1.index() && !b1.is_wildcard() {
+                    if b2.index() != b1.index() || b1.is_wildcard() {
                         continue 'OUTER;
                     }
 
@@ -339,12 +369,14 @@ impl Lgraph {
         for (from, item, to) in self.edges() {
             if let Some(b) = item.bracket() {
                 if let Some(closing) = self.is_useless_open(b, to) {
+                    assert!(!closing.is_empty());
                     let open_node = Self::get_or_add_node(&(from, item, to), &mut nodes);
                     for (a, i, b) in closing {
                         let close_node = Self::get_or_add_node(&(a, i, b), &mut nodes);
                         dep = dep.add_edge(open_node, (), close_node);
                     }
                 } else if let Some(opening) = self.is_useless_closed(b, from) {
+                    assert!(!opening.is_empty(), "{from}, {b:?}");
                     let close_node = Self::get_or_add_node(&(from, item, to), &mut nodes);
                     for (a, i, b) in opening {
                         let open_node = Self::get_or_add_node(&(a, i, b), &mut nodes);
@@ -357,6 +389,7 @@ impl Lgraph {
         if nodes.is_empty() {
             return (self, false);
         }
+        assert!(dep.nodes().count() == nodes.len());
 
         let mut is_useless = vec![None; nodes.len()];
         for node in dep.nodes() {
@@ -464,6 +497,9 @@ impl Lgraph {
             }
         }
 
+        if corresponding.is_empty() {
+            return None;
+        }
         Some(corresponding)
     }
     fn is_useless_open(&self, b: Bracket, to: usize) -> Option<Vec<(usize, Item, usize)>> {
@@ -491,6 +527,9 @@ impl Lgraph {
                 corresponding.push((q1, item2, next));
             }
         }
+        if corresponding.is_empty() {
+            return None;
+        }
 
         Some(corresponding)
     }
@@ -516,7 +555,7 @@ impl Lgraph {
                     continue;
                 }
 
-                if item2.look_ahead().is_some() {
+                if !item1.is_distinguishable(&item2) {
                     res = res.add_edge(from, item, to);
                     continue 'OUTER;
                 }
