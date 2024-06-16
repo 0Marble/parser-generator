@@ -19,9 +19,9 @@ impl Optimization {
             Self::Deadend,
             Self::EmptyEdge,
             Self::BackMerge,
-            Self::Diamonds,
-            Self::UselessBrackets,
-            Self::UselessLookahead,
+            // Self::Diamonds,
+            // Self::UselessBrackets,
+            // Self::UselessLookahead,
         ]
     }
 }

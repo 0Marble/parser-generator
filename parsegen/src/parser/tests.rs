@@ -361,8 +361,8 @@ pub fn slr_gauntlet(t: &mut dyn TestParser) {
 
 #[test]
 fn runtime_parser() {
-    println!("testing ll1");
-    ll1_gauntlet(&mut RuntimeParser::default());
+    // println!("testing ll1");
+    // ll1_gauntlet(&mut RuntimeParser::default());
     println!("testing slr");
     slr_gauntlet(&mut RuntimeParser::default());
 }

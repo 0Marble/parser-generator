@@ -115,7 +115,7 @@ impl Lgraph {
         )
     }
 
-    fn get_idx<T>(node: T, indices: &mut HashMap<T, usize>) -> usize
+    pub(crate) fn get_idx<T>(node: T, indices: &mut HashMap<T, usize>) -> usize
     where
         T: PartialEq + Hash + Eq,
     {
