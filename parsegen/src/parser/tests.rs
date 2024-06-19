@@ -354,15 +354,15 @@ pub fn slr_gauntlet(t: &mut dyn TestParser) {
             // writeln!(std::io::stderr(), "{s}").unwrap();
 
             let nodes = t.parse(&toks).unwrap();
-            assert_eq!(nodes, tree, "\tgrammar: {grammar}\n\ttoks: {s}");
+            assert_eq!(nodes, (tree), "\tgrammar: {grammar}\n\ttoks: {s}");
         }
     }
 }
 
 #[test]
 fn runtime_parser() {
-    // println!("testing ll1");
-    // ll1_gauntlet(&mut RuntimeParser::default());
+    println!("testing ll1");
+    ll1_gauntlet(&mut RuntimeParser::default());
     println!("testing slr");
     slr_gauntlet(&mut RuntimeParser::default());
 }

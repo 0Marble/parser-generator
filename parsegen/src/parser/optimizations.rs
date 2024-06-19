@@ -1,4 +1,5 @@
 use crate::TransitionScheme;
+use std::io::Write;
 
 use super::lgraph::{Bracket, Item, Lgraph};
 use std::collections::{HashSet, VecDeque};
@@ -10,6 +11,7 @@ pub enum Optimization {
     BackMerge,
     Diamonds,
     UselessBrackets,
+    LinearBrackets,
     UselessLookahead,
 }
 
@@ -20,8 +22,8 @@ impl Optimization {
             Self::EmptyEdge,
             Self::BackMerge,
             Self::Diamonds,
-            Self::UselessBrackets,
             Self::UselessLookahead,
+            Self::LinearBrackets,
         ]
     }
 }
@@ -50,6 +52,16 @@ impl Lgraph {
                 }
                 if opts.contains(&O::BackMerge) {
                     let (next, step) = self.back_merge();
+                    self = next;
+                    // std::fs::write(
+                    //     format!("tests/optimize_backmerge_{count}.dot"),
+                    //     self.to_string(),
+                    // )
+                    // .unwrap();
+                    res |= step;
+                }
+                if opts.contains(&O::LinearBrackets) {
+                    let (next, step) = self.linear_brackets();
                     self = next;
                     // std::fs::write(
                     //     format!("tests/optimize_backmerge_{count}.dot"),
@@ -477,14 +489,13 @@ impl Lgraph {
         }
 
         let mut corresponding = vec![];
-        let mut visited = HashSet::new();
-        let mut queue = VecDeque::from([from]);
-        while let Some(q1) = queue.pop_front() {
+        let mut queue = VecDeque::from([(from, HashSet::new())]);
+        while let Some((q1, mut visited)) = queue.pop_front() {
             for (prev, item2, _) in self.edges_to(q1) {
                 let b1 = if let Some(b) = item2.bracket() {
                     b
                 } else if visited.insert((prev, item2.clone(), q1)) {
-                    queue.push_back(prev);
+                    queue.push_back((prev, visited.clone()));
                     continue;
                 } else {
                     return None;
@@ -508,14 +519,13 @@ impl Lgraph {
         }
 
         let mut corresponding = vec![];
-        let mut visited = HashSet::new();
-        let mut queue = VecDeque::from([to]);
-        while let Some(q1) = queue.pop_front() {
+        let mut queue = VecDeque::from([(to, HashSet::new())]);
+        while let Some((q1, mut visited)) = queue.pop_front() {
             for (_, item2, next) in self.edges_from(q1) {
                 let b1 = if let Some(b) = item2.bracket() {
                     b
                 } else if visited.insert((q1, item2.clone(), next)) {
-                    queue.push_back(next);
+                    queue.push_back((next, visited.clone()));
                     continue;
                 } else {
                     return None;
@@ -569,5 +579,128 @@ impl Lgraph {
         }
 
         (res, changed)
+    }
+
+    fn linear_brackets(self) -> (Self, bool) {
+        let mut res = Self::new(self.start());
+        let mut changed = false;
+
+        for (from, item, to) in self.edges() {
+            let b = if let Some(b) = item.bracket() {
+                b
+            } else {
+                res = res.add_edge(from, item, to);
+                continue;
+            };
+
+            let to_remove = if let Some((from1, b1, to1)) = self.forward_linear(from, b, to) {
+                if let Some((from2, b2, to2)) = self.backward_linear(from1, b1, to1) {
+                    assert_eq!((from2, b2, to2), (from, b, to));
+                    println!("{:?} and {:?}", (from, b, to), (from1, b1, to1));
+                    true
+                } else {
+                    false
+                }
+            } else if let Some((from1, b1, to1)) = self.backward_linear(from, b, to) {
+                if let Some((from2, b2, to2)) = self.forward_linear(from1, b1, to1) {
+                    assert_eq!((from2, b2, to2), (from, b, to));
+                    println!("{:?} and {:?}", (from, b, to), (from1, b1, to1));
+                    true
+                } else {
+                    false
+                }
+            } else {
+                false
+            };
+
+            if to_remove {
+                res = res.add_edge(from, item.with_bracket(None), to);
+                changed = true;
+            } else {
+                res = res.add_edge(from, item, to);
+            }
+        }
+
+        for node in self.end_nodes() {
+            res = res.add_end_node(node)
+        }
+        (res, changed)
+    }
+
+    fn forward_linear(
+        &self,
+        _from: usize,
+        b: Bracket,
+        to: usize,
+    ) -> Option<(usize, Bracket, usize)> {
+        if !b.is_open() {
+            return None;
+        }
+
+        let mut next = Some(to);
+        let mut visited = HashSet::new();
+        while let Some(n) = next.take() {
+            if !visited.insert(n) {
+                return None;
+            }
+            let mut res = None;
+
+            for (from1, item1, to1) in self.edges_from(n) {
+                if next.is_some() {
+                    return None;
+                }
+                next = Some(to1);
+                if let Some(b1) = item1.bracket() {
+                    res = Some((from1, b1, to1));
+                }
+            }
+            if let Some((from1, b1, to1)) = res {
+                if b1.is_wildcard() || !b1.is_open() && b1.index() == b.index() {
+                    return Some((from1, b1, to1));
+                } else {
+                    return None;
+                }
+            }
+        }
+
+        None
+    }
+    fn backward_linear(
+        &self,
+        from: usize,
+        b: Bracket,
+        _to: usize,
+    ) -> Option<(usize, Bracket, usize)> {
+        if b.is_open() {
+            return None;
+        }
+
+        let mut next = Some(from);
+        let mut visited = HashSet::new();
+        while let Some(n) = next.take() {
+            if !visited.insert(n) {
+                return None;
+            }
+            let mut res = None;
+            for (from1, item1, to1) in self.edges_to(n) {
+                if next.is_some() {
+                    return None;
+                }
+                next = Some(from1);
+
+                if let Some(b1) = item1.bracket() {
+                    res = Some((from1, b1, to1));
+                }
+            }
+            if let Some((from1, b1, to1)) = res {
+                if b1.is_wildcard() || !b1.is_open() && b1.index() == b.index() {
+                    return Some((from1, b1, to1));
+                } else {
+                    return None;
+                }
+            }
+        }
+
+        None
     }
 }
